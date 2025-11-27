@@ -18,7 +18,7 @@ if not GROQ_API_KEY:
     raise ValueError("❌ GROQ_API_KEY not found in .env file!")
 
 # Initialize LLM
-llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.7, api_key=GROQ_API_KEY)
+llm = ChatGroq(model="meta-llama/llama-4-scout-17b-16e-instruct", temperature=0.7, api_key=GROQ_API_KEY)
 
 # Define conversation state
 class ChatState(TypedDict):
