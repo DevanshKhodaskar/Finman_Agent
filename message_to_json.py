@@ -25,6 +25,18 @@ if not BOT_TOKEN:
 
 # global graph (initialized in main)
 graph = None
+def init_graph():
+    """
+    Initialize the global graph if it's not already initialized.
+    Safe to call multiple times.
+    """
+    global graph
+    if graph is not None:
+        return
+    print("🤖 Initializing graph (from message_to_json.init_graph)...")
+    graph = create_graph()
+    print("✅ Graph initialized")
+
 
 # Confidence threshold: accept LLM field if >= this value
 CONF_THRESH = 0.70
@@ -128,8 +140,9 @@ def categorization_with_confidence(user_msg: str, image_b64: Optional[str]) -> D
     Invoke the graph then, if necessary, re-invoke with force_guess=True to get a best-effort answer.
     Returns normalized dict with confidences and raw_model for debugging.
     """
+    global graph
     if graph is None:
-        raise RuntimeError("Graph not initialized")
+        init_graph()   # 👈 instead of raising
 
     # 1) Normal prompt (no forced guess)
     prompt = build_categorization_prompt_with_confidence(user_msg, image_b64, force_guess=False)
@@ -190,7 +203,7 @@ def format_pretty_json(d: Dict[str, Any]) -> str:
     return json.dumps(out, ensure_ascii=False, indent=2)
 
 
-def needs_clarification(parsed: Dict[str, Any], thresh: float = CONF_THRESH) -> (bool, list):
+def needs_clarification(parsed: Dict[str, Any], thresh: float = CONF_THRESH):
     """
     Return (True, issues_list) if any field confidence < thresh.
     Issues are strings among 'name', 'category', 'price'.
