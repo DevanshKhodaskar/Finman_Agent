@@ -61,28 +61,39 @@ def normalize_phone(p: str) -> str:
     return p
 
 
+# def authenticate(contact_phone: str, contact_user_id: int | None, tg_user_id: int) -> bool:
+#     """
+#     Return True if user is authenticated based on:
+#       1) contact_user_id matches sender tg_user_id (strong proof)
+#       2) OR contact_phone appears in AUTHORIZED_PHONES (if set)
+#     If AUTHORIZED_PHONES is empty, only method (1) will be accepted.
+#     """
+#     # 1) strong check: contact.user_id provided and matches sending user
+#     if contact_user_id is not None and contact_user_id == tg_user_id:
+#         return True
+
+#     # 2) allow-list check (if configured)
+#     if AUTHORIZED_PHONES:
+#         norm = normalize_phone(contact_phone)
+#         # allow comparison in two common formats: with and without +
+#         candidates = {norm, ("+" + norm) if not norm.startswith("+") else norm.replace("+", "")}
+#         # create normalized authorized set for comparison
+#         auth_normalized = {normalize_phone(x).lstrip("+") for x in AUTHORIZED_PHONES}
+#         # compare without leading plus
+#         if normalize_phone(norm).lstrip("+") in auth_normalized or (("+" + normalize_phone(norm)).lstrip("+") in auth_normalized):
+#             return True
+
+#     return False
 def authenticate(contact_phone: str, contact_user_id: int | None, tg_user_id: int) -> bool:
     """
-    Return True if user is authenticated based on:
-      1) contact_user_id matches sender tg_user_id (strong proof)
-      2) OR contact_phone appears in AUTHORIZED_PHONES (if set)
-    If AUTHORIZED_PHONES is empty, only method (1) will be accepted.
+    Authenticate ONLY if the user shared their own Telegram contact.
+    That means contact.user_id must equal the message sender's Telegram ID.
     """
-    # 1) strong check: contact.user_id provided and matches sending user
+    # Strong and only check: contact.user_id must match their own Telegram ID.
     if contact_user_id is not None and contact_user_id == tg_user_id:
         return True
 
-    # 2) allow-list check (if configured)
-    if AUTHORIZED_PHONES:
-        norm = normalize_phone(contact_phone)
-        # allow comparison in two common formats: with and without +
-        candidates = {norm, ("+" + norm) if not norm.startswith("+") else norm.replace("+", "")}
-        # create normalized authorized set for comparison
-        auth_normalized = {normalize_phone(x).lstrip("+") for x in AUTHORIZED_PHONES}
-        # compare without leading plus
-        if normalize_phone(norm).lstrip("+") in auth_normalized or (("+" + normalize_phone(norm)).lstrip("+") in auth_normalized):
-            return True
-
+    # Otherwise reject (shared someone else's contact or typed phone manually)
     return False
 
 
@@ -101,68 +112,60 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # print("contact_handler Called")
-    """
-    Triggered when the user shares a contact.
-    Authenticate the user and add to in-memory authenticated_users if successful.
-    """
     msg = update.message
-    contact = msg.contact  # telegram.Contact or None
+    contact = msg.contact
     tg_user = update.effective_user
-    tg_id = getattr(tg_user, "id", None)
+    tg_id = tg_user.id
 
     contact_phone = None
     contact_user_id = None
 
     if contact:
-        contact_phone = getattr(contact, "phone_number", None)
-        contact_user_id = getattr(contact, "user_id", None)
+        contact_phone = contact.phone_number
+        contact_user_id = contact.user_id   # IMPORTANT field
 
-    # Try to authenticate
+    # authenticate
     is_auth = authenticate(contact_phone, contact_user_id, tg_id)
 
+    # For debugging / logging
     printed = {
         "timestamp_utc": datetime.utcnow().isoformat() + "Z",
         "action": "contact_received_and_auth_attempt",
         "telegram_user": {
             "id": tg_id,
-            "username": getattr(tg_user, "username", None),
-            "first_name": getattr(tg_user, "first_name", None),
-            "last_name": getattr(tg_user, "last_name", None),
+            "username": tg_user.username,
+            "first_name": tg_user.first_name,
+            "last_name": tg_user.last_name,
         },
         "contact_shared": {
             "phone_number": contact_phone,
             "contact_user_id": contact_user_id,
-            "vcard": getattr(contact, "vcard", None) if contact else None,
         },
         "authenticated": is_auth,
     }
 
     print("\n" + "=" * 28 + " AUTH ATTEMPT " + "=" * 28)
-    print(json.dumps(printed, indent=2, ensure_ascii=False))
+    print(json.dumps(printed, indent=2))
     print("=" * 72 + "\n")
 
+    # If authenticated, save user & acknowledge
     if is_auth:
-        # store in in-memory authenticated map
-        # normalize phone for storage
-        stored_phone = normalize_phone(contact_phone) if contact_phone else None
-        authenticated_users[tg_id] = stored_phone
-        try:
-            await msg.reply_text(
-                "✅ Authentication successful. You are now authenticated. Send any message and it will be printed on the server.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-        except Exception as e:
-            print("Warning: failed to reply after auth:", e)
+        authenticated_users[tg_id] = normalize_phone(contact_phone)
+
+        await msg.reply_text(
+            "✅ Authentication successful!\nYou shared *your own* contact.",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardRemove()
+        )
     else:
-        # remove keyboard and inform
-        try:
-            await msg.reply_text(
-                "❌ Authentication failed. Make sure you shared your own contact or your phone is authorized.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-        except Exception as e:
-            print("Warning: failed to reply after failed auth:", e)
+        await msg.reply_text(
+            "❌ Authentication failed.\n"
+            "You must press the *Share Phone Number* button and share *your own* contact.\n"
+            "Forwarding someone else’s contact will NOT work.",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardRemove()
+        )
+
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
