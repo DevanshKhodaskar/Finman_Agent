@@ -1,12 +1,13 @@
 
-# bot_share_phone.py
+# Standard library
 import os
-from experiments.db_ops import add_query_for_user   # <-- make sure path is correct
 import sys
 import json
-
 import asyncio
 from datetime import datetime
+from typing import Any, Dict, Optional
+
+# Third-party
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 from telegram import (
@@ -23,38 +24,29 @@ from telegram.ext import (
     filters,
 )
 
-import asyncio
-import json
-from datetime import datetime
-from typing import Any, Dict
-
-from message_to_json import categorization_with_confidence, needs_clarification  
-
-from message_to_json import handle_text, handle_image, init_graph
+# Local modules
+from experiments.db_ops import add_query_for_user, normalize_to_10digits
+from message_to_json import (
+    categorization_with_confidence,
+    needs_clarification,
+    handle_text,
+    handle_image,
+    init_graph,
+    download_image_base64,
+)
 
 
 # Load env
 load_dotenv()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # optional allow-list: comma separated phones, e.g. +919999999999,+911234567890
-AUTHORIZED_PHONES_ENV = os.getenv("AUTHORIZED_PHONES", "").strip()
+# AUTHORIZED_PHONES_ENV = os.getenv("AUTHORIZED_PHONES", "").strip()
 
 if not BOT_TOKEN:
     print("ERROR: BOT_TOKEN not found in .env. Create a .env with TELEGRAM_BOT_TOKEN=your_token")
     sys.exit(1)
 
-# normalize allow list into a set (remove spaces)
-AUTHORIZED_PHONES = set()
-if AUTHORIZED_PHONES_ENV:
-    for p in AUTHORIZED_PHONES_ENV.split(","):
-        p = p.strip()
-        if p:
-            # basic normalization: ensure plus sign
-            if not p.startswith("+") and p.isdigit():
-                p = "+" + p
-            AUTHORIZED_PHONES.add(p)
 
-# In-memory authenticated users mapping: { telegram_id: phone_number }
 authenticated_users = {}
 
 
@@ -95,14 +87,6 @@ def normalize_phone(p: str) -> str:
 
 
 
-from experiments.db_ops import normalize_to_10digits
-# -- PUT THESE NEAR THE TOP OF FILE (imports) --
-from datetime import datetime
-from typing import Optional
-
-# ---------------------------------------------------------------------
-# async authenticate: check contact.user_id match AND user exists in DB
-# ---------------------------------------------------------------------
 async def authenticate(contact_phone: str, contact_user_id: Optional[int], tg_user_id: int, db) -> bool:
     """
     Returns True only if:
@@ -127,13 +111,7 @@ async def authenticate(contact_phone: str, contact_user_id: Optional[int], tg_us
 
     return True
 
-# ---------------------------------------------------------------------
-# contact_handler: call authenticate(), persist telegram_id on success
-from datetime import datetime
-from telegram import ReplyKeyboardRemove
-from telegram import Update
-from telegram.ext import ContextTypes
-import json
+
 
 async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -159,7 +137,7 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if contact:
         contact_phone = contact.phone_number
-        contact_user_id = contact.user_id   # IMPORTANT field
+        contact_user_id = contact.user_id   
 
     # fetch DB from app state
     db = context.bot_data.get("db")
@@ -271,70 +249,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-#     msg = update.message
-#     contact = msg.contact
-#     tg_user = update.effective_user
-#     tg_id = tg_user.id
-
-#     contact_phone = None
-#     contact_user_id = None
-
-#     if contact:
-#         contact_phone = contact.phone_number
-#         contact_user_id = contact.user_id   # IMPORTANT field
-
-#     # Get DB from bot_data
-#     db = context.bot_data.get("db")
-#     if db is None:
-#         await msg.reply_text("❌ Server DB not available. Contact admin.")
-#         return
-
-#     # authenticate (now async with DB check)
-#     is_auth = await authenticate(contact_phone, contact_user_id, tg_id, db)
-
-#     # For debugging / logging
-#     printed = {
-#         "timestamp_utc": datetime.utcnow().isoformat() + "Z",
-#         "action": "contact_received_and_auth_attempt",
-#         "telegram_user": {
-#             "id": tg_id,
-#             "username": tg_user.username,
-#             "first_name": tg_user.first_name,
-#             "last_name": tg_user.last_name,
-#         },
-#         "contact_shared": {
-#             "phone_number": contact_phone,
-#             "contact_user_id": contact_user_id,
-#         },
-#         "authenticated": is_auth,
-#     }
-
-#     print("\n" + "=" * 28 + " AUTH ATTEMPT " + "=" * 28)
-#     print(json.dumps(printed, indent=2))
-#     print("=" * 72 + "\n")
-
-#     # If authenticated, save user & acknowledge
-#     if is_auth:
-#         authenticated_users[tg_id] = normalize_phone(contact_phone)
-
-#         await msg.reply_text(
-#             "✅ Authentication successful!\nYou shared *your own* contact.",
-#             parse_mode="Markdown",
-#             reply_markup=ReplyKeyboardRemove()
-#         )
-#     else:
-#         await msg.reply_text(
-#             "❌ Authentication failed.\n"
-#             "You must press the *Share Phone Number* button and share *your own* contact.\n"
-#             "Forwarding someone else’s contact will NOT work.",
-#             parse_mode="Markdown",
-#             reply_markup=ReplyKeyboardRemove()
-#         )
-
-
-
-# helper: normalize parsed dict keys to lowercase and ensure types
 def _normalize_parsed(parsed: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(parsed, dict):
         return {}
@@ -558,8 +472,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-# make sure BOT_TOKEN, start_command, contact_handler, message_handler
-# are already defined above thisimport asyncio
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 # make sure BOT_TOKEN, start_command, contact_handler, message_handler are defined above
 def main() -> None:
@@ -593,4 +505,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
