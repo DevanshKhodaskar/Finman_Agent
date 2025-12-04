@@ -39,8 +39,6 @@ from message_to_json import (
 # Load env
 load_dotenv()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-# optional allow-list: comma separated phones, e.g. +919999999999,+911234567890
-# AUTHORIZED_PHONES_ENV = os.getenv("AUTHORIZED_PHONES", "").strip()
 
 if not BOT_TOKEN:
     print("ERROR: BOT_TOKEN not found in .env. Create a .env with TELEGRAM_BOT_TOKEN=your_token")

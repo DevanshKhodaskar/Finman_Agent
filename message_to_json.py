@@ -1,4 +1,4 @@
-# bot_verify_confidence_full.py
+
 import asyncio
 import base64
 import json
@@ -16,14 +16,14 @@ from telegram.ext import (
 )
 from langchain_core.messages import HumanMessage
 
-from langchain_bot import create_graph  # your graph factory that returns a compiled graph
+from langchain_bot import create_graph  
 
 load_dotenv()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN not found in .env")
 
-# global graph (initialized in main)
+
 graph = None
 def init_graph():
     """
@@ -486,7 +486,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def main():
     global graph
     print("🤖 Initializing graph...")
-    graph = create_graph()  # compiled graph that accepts messages via graph.invoke(...)
+    graph = create_graph() 
     print("✅ Graph initialized")
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
