@@ -25,7 +25,7 @@ from telegram.ext import (
 )
 
 # Local modules
-from experiments.db_ops import add_query_for_user, normalize_to_10digits
+from experiments.db_ops import add_query_for_user
 from message_to_json import (
     categorization_with_confidence,
     needs_clarification,
@@ -305,18 +305,29 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Ensure DB available and fetch user record (we will need phone)
     db = context.bot_data.get("db")
     if db is None:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Server DB not available. Contact admin.")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="❌ Server DB not available. Contact admin.",
+        )
         return
 
     # try both int and str telegram_id lookups
-    db_user = await db.Users.find_one({"telegram_id": tg_id}) or await db.Users.find_one({"telegram_id": str(tg_id)})
+    db_user = await db.Users.find_one({"telegram_id": tg_id}) or await db.Users.find_one(
+        {"telegram_id": str(tg_id)}
+    )
     if not db_user:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="⚠️ User record not found. Please /start again to authenticate.")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="⚠️ User record not found. Please /start again to authenticate.",
+        )
         return
 
     phone = db_user.get("number") or db_user.get("phone") or db_user.get("mobile")
     if not phone:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="⚠️ User record missing phone number. Please re-authenticate.")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="⚠️ User record missing phone number. Please re-authenticate.",
+        )
         return
 
     # snapshot pending before calling handlers (to detect post-confirmation)
@@ -330,7 +341,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not prior_pending:
             loop = asyncio.get_event_loop()
             # run model in executor (same function your handlers use)
-            parsed = await loop.run_in_executor(None, lambda: categorization_with_confidence(text, None))
+            parsed = await loop.run_in_executor(
+                None, lambda: categorization_with_confidence(text, None)
+            )
             ask, issues = needs_clarification(parsed)
             if not ask:
                 # accepted automatically -> normalize and store
@@ -343,13 +356,19 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         category=norm["category"] or "Unknown",
                         price=norm["price"] or 0,
                         time=datetime.utcnow(),
-                        extra=norm.get("extra", {})
+                        extra=norm.get("extra", {}),
                     )
                 except Exception as e:
-                    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Failed to store data: {e}")
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"❌ Failed to store data: {e}",
+                    )
                     print("add_query_for_user failed:", e)
                     return
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"✅ Saved your query! ID: {res.get('inserted_id')}")
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"✅ Saved your query! ID: {res.get('inserted_id')}",
+                )
                 return
             else:
                 # low-confidence -> defer to your existing clarify/verify flow
@@ -374,13 +393,19 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         category=norm["category"] or "Unknown",
                         price=norm["price"] or 0,
                         time=datetime.utcnow(),
-                        extra=norm.get("extra", {})
+                        extra=norm.get("extra", {}),
                     )
                 except Exception as e:
-                    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Failed to store confirmed data: {e}")
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"❌ Failed to store confirmed data: {e}",
+                    )
                     print("add_query_for_user failed on confirmed:", e)
                     return
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"✅ Saved confirmed query! ID: {res.get('inserted_id')}")
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"✅ Saved confirmed query! ID: {res.get('inserted_id')}",
+                )
                 return
 
         # nothing stored and flow handled by handler (clarifications etc.)
@@ -388,20 +413,28 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ---------- IMAGE message path ----------
     elif getattr(msg, "photo", None):
-        # If no prior pending, attempt a quick auto-parse using the image and store on high confidence
+        # NEW: read caption (e.g. "40rupees") and use it in the model call
+        caption = (msg.caption or "").strip()
+
+        # If no prior pending, attempt a quick auto-parse using image + caption
         if not prior_pending:
-            # process image file to base64 (reuse your helper)
             photo = msg.photo
             file_id = photo[-1].file_id
             file_obj = await context.bot.get_file(file_id)
             try:
                 image_b64 = await download_image_base64(file_obj)
             except Exception as e:
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Failed to download image: {e}")
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"Failed to download image: {e}",
+                )
                 return
 
             loop = asyncio.get_event_loop()
-            parsed = await loop.run_in_executor(None, lambda: categorization_with_confidence("", image_b64))
+            # 👇 use caption + image, not just image
+            parsed = await loop.run_in_executor(
+                None, lambda: categorization_with_confidence(caption, image_b64)
+            )
             ask, issues = needs_clarification(parsed)
             if not ask:
                 norm = _normalize_parsed(parsed)
@@ -413,16 +446,22 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         category=norm["category"] or "Unknown",
                         price=norm["price"] or 0,
                         time=datetime.utcnow(),
-                        extra=norm.get("extra", {})
+                        extra=norm.get("extra", {}),
                     )
                 except Exception as e:
-                    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Failed to store image data: {e}")
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"❌ Failed to store image data: {e}",
+                    )
                     print("add_query_for_user failed image:", e)
                     return
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"✅ Saved your query from image! ID: {res.get('inserted_id')}")
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"✅ Saved your query from image! ID: {res.get('inserted_id')}",
+                )
                 return
             else:
-                # low-confidence -> let your handler start clarification
+                # low-confidence -> let your handler start clarification (it already uses caption + image)
                 await handle_image(update, context)
         else:
             # there is prior pending -> delegate to handler (it will update/pop pending)
@@ -442,13 +481,19 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         category=norm["category"] or "Unknown",
                         price=norm["price"] or 0,
                         time=datetime.utcnow(),
-                        extra=norm.get("extra", {})
+                        extra=norm.get("extra", {}),
                     )
                 except Exception as e:
-                    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Failed to store confirmed image data: {e}")
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"❌ Failed to store confirmed image data: {e}",
+                    )
                     print("add_query_for_user failed on image confirmed:", e)
                     return
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"✅ Saved confirmed query from image! ID: {res.get('inserted_id')}")
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"✅ Saved confirmed query from image! ID: {res.get('inserted_id')}",
+                )
                 return
 
         return
@@ -456,13 +501,13 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         # unsupported type (but user is authenticated)
         try:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Unsupported message type. Please send text or an image.")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="❌ Unsupported message type. Please send text or an image.",
+            )
         except Exception as e:
             print("Warning: failed to send unsupported-type message:", e)
         return
-
-
-
 
 
 

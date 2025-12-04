@@ -43,52 +43,54 @@ CONF_THRESH = 0.70
 
 ALLOWED_CATEGORIES = {"Food", "Entertainment", "Travel", "Others"}
 
-
 def build_categorization_prompt_with_confidence(
-    user_msg: str, image_b64: Optional[str], force_guess: bool = False
+    user_msg: str,
+    image_present: bool,
+    force_guess: bool = False,
 ) -> str:
     """
-    Strong multimodal prompt. Instruct model to return price as a number (no currency suffix).
+    Builds a strong categorization prompt for the LLM.
+    Does NOT embed base64 directly; image is sent separately via image_url.
     """
-    if image_b64:
+
+    if image_present:
         img_section = (
-            "IMAGE_BASE64_START\n"
-            + image_b64
-            + "\nIMAGE_BASE64_END\n\n"
-            "NOTE: The above is the base64-encoded image. Analyze it carefully."
+            "An image is attached. Use it along with the text to infer Name, category, and price.\n"
         )
     else:
-        img_section = "No image provided."
+        img_section = "No image is attached. Use only the user text.\n"
 
     guess_note = (
-        "If you are not certain about a value, still MAKE A BEST-EFFORT GUESS and set confidence accordingly."
+        "If uncertain, MAKE YOUR BEST-EFFORT GUESS and set confidence accordingly."
         if force_guess
-        else "If you are not certain about a value, you may set it to null and provide a low confidence."
+        else "If uncertain, you may set values to null and provide low confidence."
     )
 
     return (
-        "You are a multimodal assistant with vision. Use the IMAGE (if provided) and the TEXT (if provided) to IDENTIFY "
-        "the product Name, category and price. Return EXACTLY one JSON object ONLY (no commentary, no code fences).\n\n"
-        "The JSON object must include these fields:\n"
+        "You are a multimodal assistant with vision. Use the IMAGE (if provided) and the TEXT (if provided) to identify "
+        "the product Name, category, and price. Return EXACTLY one JSON object ONLY (no commentary, no explanation).\n\n"
+
+        "Your JSON object MUST contain these fields:\n"
         "- Name: string or null\n"
-        "- name_confidence: float between 0.0 and 1.0\n"
-        "- category: one of exactly (Food, Entertainment, Travel, Others) or null\n"
-        "- category_confidence: float between 0.0 and 1.0\n"
-        "- price: number (integer or float) or null — DO NOT include currency symbols or text (e.g. 20, 3.5),\n"
-        "         if user supplied '20rs' or '₹20' interpret as 20\n"
-        "- price_confidence: float between 0.0 and 1.0\n\n"
-        "RULES (MUST FOLLOW):\n"
-        "1) Respond ONLY with a single JSON object and nothing else.\n"
-        "2) price MUST be a numeric value (no currency suffix). If price cannot be determined, set price to null.\n"
-        "3) Confidence must be a number in [0.0, 1.0]. If unsure, set the field to null and a low confidence (e.g. 0.0-0.4).\n"
-        "4) If asked to GUESS (see below), provide your best guess and a confidence value reflecting your certainty.\n\n"
-        f"{img_section}\n\n"
+        "- name_confidence: float 0.0–1.0\n"
+        "- category: one of (Food, Entertainment, Travel, Others) or null\n"
+        "- category_confidence: float 0.0–1.0\n"
+        "- price: number or null (no currency symbols; convert '₹20' or '20rs' to 20)\n"
+        "- price_confidence: float 0.0–1.0\n\n"
+
+        "RULES:\n"
+        "1) Output ONLY a raw JSON object.\n"
+        "2) price MUST be numeric (integer or float).\n"
+        "3) If unsure, set fields to null and provide low confidence.\n"
+        "4) If guessing is required, provide your best guess.\n\n"
+
+        f"{img_section}"
         f'User text: "{user_msg}"\n\n'
         f"{guess_note}\n\n"
-        "Example (model must not include extra text):\n"
+
+        "Example output (do NOT include comments):\n"
         '{"Name":"Lays","name_confidence":0.95,"category":"Food","category_confidence":0.9,"price":20,"price_confidence":0.98}\n'
     )
-
 
 
 
@@ -135,6 +137,42 @@ def _normalize_confidence_parsed(parsed: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _build_human_message_with_optional_image(
+    user_msg: str,
+    image_b64: Optional[str],
+    force_guess: bool,
+) -> HumanMessage:
+    """
+    Build a HumanMessage for the graph:
+    - If image_b64 is provided, attach as an image_url with a data URL.
+    - Otherwise, send just text.
+    """
+    image_present = image_b64 is not None
+    prompt_text = build_categorization_prompt_with_confidence(
+        user_msg=user_msg,
+        image_present=image_present,
+        force_guess=force_guess,
+    )
+
+    if image_b64:
+        # data URL for the model (same pattern as in langchain_bot.py)
+        data_url = f"data:image/jpeg;base64,{image_b64}"
+
+        content = [
+            {"type": "text", "text": prompt_text},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": data_url,
+                },
+            },
+        ]
+        return HumanMessage(content=content)
+
+    # no image, pure text
+    return HumanMessage(content=prompt_text)
+
+
 def categorization_with_confidence(user_msg: str, image_b64: Optional[str]) -> Dict[str, Any]:
     """
     Invoke the graph then, if necessary, re-invoke with force_guess=True to get a best-effort answer.
@@ -142,11 +180,16 @@ def categorization_with_confidence(user_msg: str, image_b64: Optional[str]) -> D
     """
     global graph
     if graph is None:
-        init_graph()   # 👈 instead of raising
+        init_graph()
 
     # 1) Normal prompt (no forced guess)
-    prompt = build_categorization_prompt_with_confidence(user_msg, image_b64, force_guess=False)
-    result = graph.invoke({"messages": [HumanMessage(content=prompt)]})
+    human_msg = _build_human_message_with_optional_image(
+        user_msg=user_msg,
+        image_b64=image_b64,
+        force_guess=False,
+    )
+
+    result = graph.invoke({"messages": [human_msg]})
     model_msg = result["messages"][-1]
     text = getattr(model_msg, "content", str(model_msg))
 
@@ -163,8 +206,13 @@ def categorization_with_confidence(user_msg: str, image_b64: Optional[str]) -> D
             return normalized
 
     # 2) Otherwise, re-prompt asking the model to FORCE A BEST-EFFORT GUESS
-    prompt2 = build_categorization_prompt_with_confidence(user_msg, image_b64, force_guess=True)
-    result2 = graph.invoke({"messages": [HumanMessage(content=prompt2)]})
+    human_msg2 = _build_human_message_with_optional_image(
+        user_msg=user_msg,
+        image_b64=image_b64,
+        force_guess=True,
+    )
+
+    result2 = graph.invoke({"messages": [human_msg2]})
     model_msg2 = result2["messages"][-1]
     text2 = getattr(model_msg2, "content", str(model_msg2))
 
@@ -258,7 +306,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         image_b64 = pending.get("image_b64")
         combined_text = (pending.get("user_text") or "") + " " + user_text
         loop = asyncio.get_event_loop()
-        parsed = await loop.run_in_executor(None, lambda: categorization_with_confidence(combined_text, image_b64))
+        parsed = await loop.run_in_executor(
+            None,
+            lambda: categorization_with_confidence(combined_text, image_b64),
+        )
         # Decide again
         ask, issues = needs_clarification(parsed)
         if not ask:
@@ -271,7 +322,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.chat_data.pop("pending", None)
             return
         # still unclear -> ask specific question(s)
-        pending.update({"stage": "await_clarify", "parsed": parsed, "issues": issues, "user_text": combined_text})
+        pending.update({
+            "stage": "await_clarify",
+            "parsed": parsed,
+            "issues": issues,
+            "user_text": combined_text,
+        })
         context.chat_data["pending"] = pending
         await update.message.reply_text(_start_verif_question_issues(issues))
         return
@@ -294,7 +350,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # user said no -> ask which field to correct
                 pending["substage"] = "choose_field"
                 context.chat_data["pending"] = pending
-                await update.message.reply_text("Which field would you like to correct? Reply with: name / category / price / all")
+                await update.message.reply_text(
+                    "Which field would you like to correct? Reply with: name / category / price / all"
+                )
                 return
 
         if stage == "choose_field":
@@ -324,19 +382,26 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if parsed_try:
                     parsed = _normalize_confidence_parsed(parsed_try)
                 else:
-                    await update.message.reply_text("Couldn't parse that full JSON. Please send corrected Name, category and price as a JSON or correct fields one by one.")
+                    await update.message.reply_text(
+                        "Couldn't parse that full JSON. Please send corrected Name, category and price as a JSON or correct fields one by one."
+                    )
                     return
 
             # After correction, go back to verify prompt
             pending["parsed"] = parsed
             pending["substage"] = "await_verify_response"
             context.chat_data["pending"] = pending
-            await update.message.reply_text("Got it. " + ("Confirm this:\n" + format_pretty_json(parsed)))
+            await update.message.reply_text(
+                "Got it. " + ("Confirm this:\n" + format_pretty_json(parsed))
+            )
             return
 
     # No pending flows -> new message triggers categorization (text-only)
     loop = asyncio.get_event_loop()
-    parsed = await loop.run_in_executor(None, lambda: categorization_with_confidence(user_text, None))
+    parsed = await loop.run_in_executor(
+        None,
+        lambda: categorization_with_confidence(user_text, None),
+    )
 
     ask, issues = needs_clarification(parsed)
     if not ask:
@@ -360,10 +425,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(_start_verif_question_issues(issues))
 
 
+
+
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo = update.message.photo
     if not photo:
         return
+
+    # 👇 NEW: read caption text (e.g. "40rupees")
+    caption = (update.message.caption or "").strip()
+
     file_id = photo[-1].file_id
     file_obj = await context.bot.get_file(file_id)
 
@@ -373,15 +444,19 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Failed to download image: {e}")
         return
 
-    # initial categorization using image only
+    # initial categorization using image + caption text
     loop = asyncio.get_event_loop()
-    parsed = await loop.run_in_executor(None, lambda: categorization_with_confidence("", image_b64))
+    parsed = await loop.run_in_executor(
+        None,
+        lambda: categorization_with_confidence(caption, image_b64),
+    )
 
     ask, issues = needs_clarification(parsed)
     if not ask:
         # accept automatically
         pretty = format_pretty_json(parsed)
         print("\n----- NEW MESSAGE (IMAGE) ACCEPTED -----")
+        print("Caption text:", caption)
         print(pretty)
         print("-----------------------------------------\n")
         await update.message.reply_text(pretty)
@@ -392,14 +467,19 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "stage": "await_clarify",
         "parsed": parsed,
         "image_b64": image_b64,
-        "user_text": "",
+        "user_text": caption,   # 👈 store caption so later text is appended
         "issues": issues,
     }
     await update.message.reply_text(_start_verif_question_issues(issues))
 
 
+
+
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Bot ready. Send text or an image. I will guess fields and ask you only when unsure.")
+    await update.message.reply_text(
+        "Bot ready. Send text or an image. I will guess fields and ask you only when unsure."
+    )
 
 
 # ---------------- Main ----------------
