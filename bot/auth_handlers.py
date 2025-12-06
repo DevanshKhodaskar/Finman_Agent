@@ -52,6 +52,7 @@ async def choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handles menu choice and sets intent for next step."""
     text = (update.message.text or "").strip().lower()
 
+    # accept common variants for reset wording (button text vs underscore vs typed)
     if text == "create account":
         await update.message.reply_text(
             "Share your contact (recommended) or type your phone number to create an account. You will be asked for a website password.",
@@ -68,7 +69,9 @@ async def choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["intent"] = "authenticate"
         return ENTER_CONTACT_OR_PHONE
 
-    if text == "reset_password":
+    # handle the Reset option from the keyboard (covers "Reset password", "reset password",
+    # "reset_password" and users who type "reset")
+    if text in ("reset_password", "reset password", "reset"):
         await update.message.reply_text(
             "Share your contact (recommended) or type your phone number to reset your website password.",
             reply_markup=auth_menu_kb(),
@@ -78,6 +81,7 @@ async def choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("Please choose a valid option.", reply_markup=main_menu_kb())
     return CHOOSING
+
 
 
 async def handle_image_in_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -107,6 +111,30 @@ async def handle_image_in_auth(update: Update, context: ContextTypes.DEFAULT_TYP
         except Exception:
             pass
     return ADD_QUERY
+
+
+
+# Add this to bot/auth_handlers.py
+
+async def reset_password_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Starts the Reset Password flow (same as choosing Reset from the menu).
+    This asks the user to share contact (auth_menu_kb) and sets intent to 'reset'.
+    Returns ENTER_CONTACT_OR_PHONE so the same receive_contact_or_phone handler takes over.
+    """
+    # Keep menu consistent and set the flow intent
+    context.user_data["intent"] = "reset"
+
+    await update.message.reply_text(
+        "Share your contact (recommended) or type your phone number to reset your website password.",
+        reply_markup=auth_menu_kb(),
+    )
+
+    return ENTER_CONTACT_OR_PHONE
+
+
+
+
 
 async def receive_contact_or_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
