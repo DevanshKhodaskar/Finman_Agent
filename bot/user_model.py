@@ -40,7 +40,7 @@ async def create_user(db: AsyncIOMotorDatabase, phone10: str, password_hash: str
         "$setOnInsert": {
             "name": name or "",
             "number": phone10,
-            "phone_number": phone10,
+            # "phone_number": phone10,
             "telegram_username": "",
             "telegram_id": 0,
             "password_hash": password_hash,
@@ -78,7 +78,6 @@ async def update_telegram_mapping(db: AsyncIOMotorDatabase, phone10: str, tg_id:
             "$set": {
                 "telegram_id": int(tg_id) if tg_id is not None else 0,
                 "telegram_username": tg_username or "",
-                "phone_number": phone10,
                 "updated_at": datetime.utcnow(),
             }
         },
