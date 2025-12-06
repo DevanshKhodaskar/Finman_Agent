@@ -1,10 +1,11 @@
-
+# message_to_json.py
 import asyncio
 import base64
 import json
 import os
 from dotenv import load_dotenv
 from typing import Optional, Dict, Any
+from datetime import datetime
 
 from telegram import Update, File
 from telegram.ext import (
@@ -16,7 +17,7 @@ from telegram.ext import (
 )
 from langchain_core.messages import HumanMessage
 
-from langchain_bot import create_graph  
+from langchain_bot import create_graph
 
 load_dotenv()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -24,7 +25,10 @@ if not BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN not found in .env")
 
 
+# ---------- Graph / LLM utilities (unchanged) ----------
 graph = None
+
+
 def init_graph():
     """
     Initialize the global graph if it's not already initialized.
@@ -43,6 +47,7 @@ CONF_THRESH = 0.70
 
 ALLOWED_CATEGORIES = {"Food", "Entertainment", "Travel", "Others"}
 
+
 def build_categorization_prompt_with_confidence(
     user_msg: str,
     image_present: bool,
@@ -52,7 +57,6 @@ def build_categorization_prompt_with_confidence(
     Builds a strong categorization prompt for the LLM.
     Does NOT embed base64 directly; image is sent separately via image_url.
     """
-
     if image_present:
         img_section = (
             "An image is attached. Use it along with the text to infer Name, category, and price.\n"
@@ -93,7 +97,6 @@ def build_categorization_prompt_with_confidence(
     )
 
 
-
 def _try_fix_and_load_json(text: str) -> Optional[Dict[str, Any]]:
     """
     Try json.loads; if it fails, do minimal safe fixes (single->double quotes, strip trailing commas).
@@ -125,7 +128,7 @@ def _normalize_confidence_parsed(parsed: Dict[str, Any]) -> Dict[str, Any]:
         "raw_model": parsed,
     }
 
-    # enforce allowed category when present; otherwise keep None
+    # enforce allowed category when present; otherwise keep Others
     cat = out["category"]
     if cat is not None:
         cat_norm = str(cat).strip().capitalize()
@@ -155,9 +158,7 @@ def _build_human_message_with_optional_image(
     )
 
     if image_b64:
-        # data URL for the model (same pattern as in langchain_bot.py)
         data_url = f"data:image/jpeg;base64,{image_b64}"
-
         content = [
             {"type": "text", "text": prompt_text},
             {
@@ -169,7 +170,6 @@ def _build_human_message_with_optional_image(
         ]
         return HumanMessage(content=content)
 
-    # no image, pure text
     return HumanMessage(content=prompt_text)
 
 
@@ -246,7 +246,6 @@ async def download_image_base64(file: File) -> str:
 
 # ---------------- utility & verification helpers ----------------
 def format_pretty_json(d: Dict[str, Any]) -> str:
-    # Filter to only Name, category, price for printing
     out = {"Name": d.get("Name"), "category": d.get("category"), "price": d.get("price")}
     return json.dumps(out, ensure_ascii=False, indent=2)
 
@@ -267,23 +266,122 @@ def needs_clarification(parsed: Dict[str, Any], thresh: float = CONF_THRESH):
 
 
 def _start_verif_question_issues(issues: list) -> str:
-    """
-    Build a single clarifying question targeted to issues.
-    """
     if not issues:
         return "Is this correct? Reply 'yes' to confirm or 'no' to correct."
-    # Tailor a concise clarifying question:
     if issues == ["price"]:
         return "I couldn't confidently determine the price. What's the price (e.g., '10rs')?"
     if issues == ["name"]:
         return "I couldn't confidently determine the product name. What is the product called?"
     if issues == ["category"]:
         return "I couldn't confidently determine the category. Which of Food / Entertainment / Travel / Others is it?"
-    # multiple issues
     return "I'm unsure about: " + ", ".join(issues) + ". Could you provide those values? (You can reply like: Name, category, price)"
 
 
-# ---------------- Telegram handlers & flow ----------------
+# ---------------- DB helper to store a query using your schema ----------------
+async def _store_query_for_user(db, telegram_id: int, parsed: Dict[str, Any]) -> Optional[str]:
+    """
+    Insert a document into db.Queries using the schema:
+      phone_number: String,
+      price: Number,
+      name: String,
+      category: String,
+      isIncome: Boolean,
+      time: Date,
+      telegram_id: String
+    Returns inserted_id (str) or None on failure.
+    """
+    # Resolve user phone from Users collection
+    tg_str = str(telegram_id)
+
+    # First try to find user by numeric telegram_id field (some existing docs use int)
+    user = await db.Users.find_one({"telegram_id": telegram_id})
+    if not user:
+        # try string form
+        user = await db.Users.find_one({"telegram_id": tg_str})
+    if not user:
+        # fallback: try to match by telegram_username stored previously (if any)
+        user = await db.Users.find_one({"telegram_username": {"$exists": True}})
+    if not user:
+        # don't auto-create user here
+        return None
+
+    # Existing Users collection in your DB uses 'number' as phone field (observed from validation error),
+    # so try 'number' first, then other keys as fallback.
+    phone = user.get("number") or user.get("phone_number") or user.get("phone") or user.get("mobile")
+    if not phone:
+        return None
+
+    # Normalize price to number
+    price_raw = parsed.get("price")
+    price_num = None
+    if price_raw is not None:
+        try:
+            if isinstance(price_raw, str):
+                tmp = price_raw.strip().lower().replace("₹", "").replace("rs", "").replace(",", "").replace("$", "")
+                price_num = float(tmp) if ("." in tmp) else int(tmp)
+            elif isinstance(price_raw, (int, float)):
+                price_num = price_raw
+        except Exception:
+            price_num = None
+
+    # Build doc (respecting your Queries schema)
+    doc = {
+        "phone_number": phone,
+        "price": price_num if price_num is not None else 0,
+        "name": parsed.get("Name") or parsed.get("name") or "",
+        "category": parsed.get("category") or "uncategorized",
+        "isIncome": bool(parsed.get("isIncome", False)),
+        "time": datetime.utcnow(),
+        "telegram_id": tg_str,
+        "created_at": datetime.utcnow(),
+        # store raw_model for debugging later (string or dict)
+        "raw_model": parsed.get("raw_model") if isinstance(parsed.get("raw_model"), (str, dict)) else parsed.get("raw_model"),
+    }
+
+    try:
+        res = await db.Queries.insert_one(doc)
+        return str(res.inserted_id)
+    except Exception as e:
+        print("DB insert failed:", e)
+        return None
+
+
+# ---------------- New export: parse_message_to_entry ----------------
+def parse_message_to_entry(text: str) -> Dict[str, Any]:
+    """
+    Synchronous helper expected by auth_handlers.add_query_handler.
+    It runs the model synchronously (this may block) by calling categorization_with_confidence.
+    Returns a simple dict with keys: price (number or 0), name (str), category (str), isIncome (bool).
+    """
+    # Ensure graph initialized
+    global graph
+    if graph is None:
+        init_graph()
+
+    # categorization_with_confidence is synchronous (invokes graph); call it directly
+    parsed = categorization_with_confidence(text, None)
+
+    # Normalize to expected return structure
+    price_raw = parsed.get("price")
+    price_num = 0
+    if price_raw is not None:
+        try:
+            if isinstance(price_raw, str):
+                tmp = price_raw.strip().lower().replace("₹", "").replace("rs", "").replace(",", "").replace("$", "")
+                price_num = float(tmp) if ("." in tmp) else int(tmp)
+            elif isinstance(price_raw, (int, float)):
+                price_num = price_raw
+        except Exception:
+            price_num = 0
+
+    name = parsed.get("Name") or parsed.get("name") or ""
+    category = parsed.get("category") or "uncategorized"
+    isIncome = bool(parsed.get("isIncome", False))
+
+    return {"price": price_num, "name": name, "category": category, "isIncome": isIncome}
+
+
+# ---------------- Telegram handlers & flow (modified to store to DB) ----------------
 # context.chat_data structure:
 # pending = {
 #   "stage": "await_clarify" | "verify_flow",
@@ -299,10 +397,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     pending = context.chat_data.get("pending")
+    db = context.bot_data.get("db")
 
     # If awaiting clarification (user previously asked to clarify)
     if pending and pending.get("stage") == "await_clarify":
-        # Combine pending context with this clarifying reply and re-run the model
         image_b64 = pending.get("image_b64")
         combined_text = (pending.get("user_text") or "") + " " + user_text
         loop = asyncio.get_event_loop()
@@ -310,18 +408,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             None,
             lambda: categorization_with_confidence(combined_text, image_b64),
         )
-        # Decide again
         ask, issues = needs_clarification(parsed)
         if not ask:
-            # Accept and print + reply
+            # store and respond
+            inserted = None
+            if db:
+                inserted = await _store_query_for_user(db, update.effective_user.id, parsed)
             pretty = format_pretty_json(parsed)
-            print("\n----- FINALIZED (after clarification) -----")
-            print(pretty)
-            print("-------------------------------------------\n")
-            await update.message.reply_text("Confirmed. Here is the JSON:\n" + pretty)
+            if inserted:
+                await update.message.reply_text(f"Confirmed and saved ✅\n{pretty}\nID: {inserted}")
+            else:
+                await update.message.reply_text(f"Confirmed. I couldn't save to DB (user not linked or DB error).\n{pretty}")
             context.chat_data.pop("pending", None)
             return
-        # still unclear -> ask specific question(s)
+
         pending.update({
             "stage": "await_clarify",
             "parsed": parsed,
@@ -336,18 +436,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if pending and pending.get("stage") == "verify_flow":
         stage = pending.get("substage", "await_verify_response")
         if stage == "await_verify_response":
-            # user answered yes/no to "Is this correct?"
             if user_text.lower() in ("yes", "y", "yeah", "correct"):
                 parsed = pending.get("parsed")
+                # store and respond
+                inserted = None
+                if db:
+                    inserted = await _store_query_for_user(db, update.effective_user.id, parsed)
                 pretty = format_pretty_json(parsed)
-                print("\n----- CONFIRMED BY USER -----")
-                print(pretty)
-                print("-----------------------------\n")
-                await update.message.reply_text("Confirmed. Here is the JSON:\n" + pretty)
+                if inserted:
+                    await update.message.reply_text(f"Confirmed and saved ✅\n{pretty}\nID: {inserted}")
+                else:
+                    await update.message.reply_text(f"Confirmed. I couldn't save to DB (user not linked or DB error).\n{pretty}")
                 context.chat_data.pop("pending", None)
                 return
             else:
-                # user said no -> ask which field to correct
                 pending["substage"] = "choose_field"
                 context.chat_data["pending"] = pending
                 await update.message.reply_text(
@@ -369,7 +471,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if stage == "await_correction":
             choice = pending.get("choice")
             parsed = pending.get("parsed", {})
-            # Apply correction locally
             if choice == "name":
                 parsed["Name"] = user_text.strip()
             elif choice == "category":
@@ -405,13 +506,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     ask, issues = needs_clarification(parsed)
     if not ask:
-        # accept automatically
+        # store automatically
+        inserted = None
+        if db:
+            inserted = await _store_query_for_user(db, update.effective_user.id, parsed)
         pretty = format_pretty_json(parsed)
-        print("\n----- NEW MESSAGE (TEXT) ACCEPTED -----")
-        print("User text:", user_text)
-        print(pretty)
-        print("----------------------------------------\n")
-        await update.message.reply_text(pretty)
+        if inserted:
+            await update.message.reply_text(f"{pretty}\nSaved ✅ ID: {inserted}")
+        else:
+            await update.message.reply_text(f"{pretty}\nI couldn't save this (user not linked or DB error).")
         return
 
     # low confidence -> start clarification flow (await user clarification)
@@ -425,16 +528,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(_start_verif_question_issues(issues))
 
 
-
-
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo = update.message.photo
     if not photo:
         return
 
-    # 👇 NEW: read caption text (e.g. "40rupees")
     caption = (update.message.caption or "").strip()
-
     file_id = photo[-1].file_id
     file_obj = await context.bot.get_file(file_id)
 
@@ -444,7 +543,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Failed to download image: {e}")
         return
 
-    # initial categorization using image + caption text
     loop = asyncio.get_event_loop()
     parsed = await loop.run_in_executor(
         None,
@@ -453,13 +551,16 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     ask, issues = needs_clarification(parsed)
     if not ask:
-        # accept automatically
+        # store automatically
+        db = context.bot_data.get("db")
+        inserted = None
+        if db:
+            inserted = await _store_query_for_user(db, update.effective_user.id, parsed)
         pretty = format_pretty_json(parsed)
-        print("\n----- NEW MESSAGE (IMAGE) ACCEPTED -----")
-        print("Caption text:", caption)
-        print(pretty)
-        print("-----------------------------------------\n")
-        await update.message.reply_text(pretty)
+        if inserted:
+            await update.message.reply_text(f"{pretty}\nSaved ✅ ID: {inserted}")
+        else:
+            await update.message.reply_text(f"{pretty}\nI couldn't save this (user not linked or DB error).")
         return
 
     # low confidence -> ask clarifying question and save pending
@@ -467,13 +568,10 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "stage": "await_clarify",
         "parsed": parsed,
         "image_b64": image_b64,
-        "user_text": caption,   # 👈 store caption so later text is appended
+        "user_text": caption,
         "issues": issues,
     }
     await update.message.reply_text(_start_verif_question_issues(issues))
-
-
-
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -482,11 +580,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ---------------- Main ----------------
+# ---------------- Main (only used if run standalone) ----------------
 async def main():
     global graph
     print("🤖 Initializing graph...")
-    graph = create_graph() 
+    graph = create_graph()
     print("✅ Graph initialized")
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -510,7 +608,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    # ensure a fresh event loop for Python 3.14+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
