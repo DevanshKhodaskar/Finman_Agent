@@ -7,6 +7,10 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+# delegate image pipeline
+from message_to_json import handle_image as message_handle_image
+from message_to_json import parse_message_to_entry
+
 from typing import Optional
 from datetime import datetime
 
@@ -14,7 +18,6 @@ from bot import user_model
 from bot.sessions import create_session, get_session, set_session_state, destroy_session
 from utils.phone_utils import normalize_phone
 from utils.crypto import hash_password  # async password hasher
-from message_to_json import parse_message_to_entry
 
 # Conversation states
 CHOOSING, ENTER_CONTACT_OR_PHONE, ENTER_PASSWORD_CREATE, ADD_QUERY, RESET_NEW_PASSWORD = range(5)
@@ -41,7 +44,6 @@ def auth_menu_kb():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Entry point showing main menu."""
     await update.message.reply_text("Welcome — choose an option:", reply_markup=main_menu_kb())
-    # keep intent placeholder cleared
     context.user_data.pop("intent", None)
     return CHOOSING
 
@@ -78,6 +80,35 @@ async def choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CHOOSING
 
 
+async def handle_image_in_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Wrapper that only allows authenticated users (via session) to use the
+    image pipeline in message_to_json.handle_image.
+    """
+    tg_id = update.effective_user.id
+    session = get_session(tg_id)
+    if not session or not session.get("authed"):
+        await update.message.reply_text("You are not authenticated. Send /start and press the 'Share Phone Number' 📱 button to authenticate.")
+        return ConversationHandler.END
+
+    phone = session.get("phone")
+    if not phone:
+        await update.message.reply_text("Session missing phone data. Send /start and share contact again.")
+        destroy_session(tg_id)
+        return ConversationHandler.END
+
+    try:
+        # delegate to the existing pipeline (downloads image, runs model, stores)
+        await message_handle_image(update, context)
+    except Exception as e:
+        print("Error in handle_image_in_auth delegating to message_to_json:", e)
+        try:
+            await update.message.reply_text(f"Failed to process image: {e}")
+        except Exception:
+            pass
+    return ADD_QUERY
+
+
 async def receive_contact_or_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handle contact share or a typed phone number.
@@ -92,7 +123,6 @@ async def receive_contact_or_phone(update: Update, context: ContextTypes.DEFAULT
     raw_phone = None
     if contact:
         raw_phone = contact.phone_number
-        # If contact.user_id exists and is not the sender, reject (must share own contact)
         if getattr(contact, "user_id", None) is not None and int(contact.user_id) != int(tg_id):
             await msg.reply_text("Please share *your own* contact using the Share Contact button (not someone else's).", parse_mode="Markdown")
             return ENTER_CONTACT_OR_PHONE
@@ -116,7 +146,6 @@ async def receive_contact_or_phone(update: Update, context: ContextTypes.DEFAULT
 
     user = await user_model.find_user_by_phone(db, phone)
 
-    # default intent inference when not explicitly set
     if not intent:
         intent = "authenticate" if user else "create"
 
@@ -127,7 +156,6 @@ async def receive_contact_or_phone(update: Update, context: ContextTypes.DEFAULT
             destroy_session(tg_id)
             return ConversationHandler.END
 
-        # ask immediately for new password
         set_session_state(tg_id, "action", "reset_password")
         await msg.reply_text("Please send the NEW password you'd like to use for the website (this will replace the existing website password).", reply_markup=ReplyKeyboardRemove())
         return RESET_NEW_PASSWORD
@@ -135,17 +163,14 @@ async def receive_contact_or_phone(update: Update, context: ContextTypes.DEFAULT
     # ------------------- AUTHENTICATE FLOW -------------------
     if intent == "authenticate":
         if user:
-            # Link telegram and authenticate without asking for password
             try:
                 await user_model.update_telegram_mapping(db, phone, tg_id, tg_user.username)
             except Exception:
-                # best-effort: continue even if mapping update has an issue
                 pass
             create_session(tg_id, phone, authed=True)
             await msg.reply_text("✅ Authentication successful — your Telegram is now linked to your account. You can add expenses now.", reply_markup=ReplyKeyboardRemove())
             return ADD_QUERY
         else:
-            # No user -> prompt to create (ask for password)
             set_session_state(tg_id, "action", "create_after_auth")
             await msg.reply_text("No account found for this number. If you'd like to create a website account now, send a password to use for website login.", reply_markup=ReplyKeyboardRemove())
             return ENTER_PASSWORD_CREATE
@@ -153,7 +178,6 @@ async def receive_contact_or_phone(update: Update, context: ContextTypes.DEFAULT
     # ------------------- CREATE FLOW -------------------
     if intent == "create":
         if user:
-            # user already exists — link telegram and authenticate
             try:
                 await user_model.update_telegram_mapping(db, phone, tg_id, tg_user.username)
             except Exception:
@@ -162,12 +186,10 @@ async def receive_contact_or_phone(update: Update, context: ContextTypes.DEFAULT
             await msg.reply_text("An account already exists for this number. Linked your Telegram and authenticated you.", reply_markup=ReplyKeyboardRemove())
             return ADD_QUERY
         else:
-            # ask for password to create website account
             set_session_state(tg_id, "action", "create")
             await msg.reply_text("No account found. Please send a password to create your website account (this password will be used for website login).", reply_markup=ReplyKeyboardRemove())
             return ENTER_PASSWORD_CREATE
 
-    # fallback
     await msg.reply_text("Unexpected flow. Send /start to begin again.", reply_markup=ReplyKeyboardRemove())
     destroy_session(tg_id)
     return ConversationHandler.END
@@ -199,10 +221,8 @@ async def receive_password_create(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("Server DB not available.")
         return ConversationHandler.END
 
-    # Re-check if user was created in the meantime
     existing = await user_model.find_user_by_phone(db, phone)
     if existing:
-        # Link and auth (do not change password if user existed)
         try:
             await user_model.update_telegram_mapping(db, phone, tg_id, update.effective_user.username)
         except Exception:
@@ -211,7 +231,6 @@ async def receive_password_create(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("Account already existed — linked your Telegram and authenticated you.")
         return ADD_QUERY
 
-    # create user with hashed password (website password)
     hashed = await hash_password(pw)
     try:
         created = await user_model.create_user(db, phone, hashed, name=update.effective_user.full_name)
@@ -220,7 +239,6 @@ async def receive_password_create(update: Update, context: ContextTypes.DEFAULT_
         destroy_session(tg_id)
         return ConversationHandler.END
 
-    # link telegram and authenticate for bot usage
     try:
         await user_model.update_telegram_mapping(db, phone, tg_id, update.effective_user.username)
     except Exception:
@@ -256,14 +274,12 @@ async def receive_reset_new_password(update: Update, context: ContextTypes.DEFAU
         await update.message.reply_text("Server DB not available.")
         return ConversationHandler.END
 
-    # ensure user exists
     user = await user_model.find_user_by_phone(db, phone)
     if not user:
         await update.message.reply_text("No account found for this phone. Use Create account to make a website account.", reply_markup=main_menu_kb())
         destroy_session(tg_id)
         return ConversationHandler.END
 
-    # hash and update password
     hashed = await hash_password(pw)
     try:
         await user_model.update_password_hash(db, phone, hashed)
@@ -280,6 +296,8 @@ async def receive_reset_new_password(update: Update, context: ContextTypes.DEFAU
 async def add_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Save an expense/query after the user is authenticated via Telegram.
+    Accepts text messages or photos with captions. For full LLM-driven image
+    understanding use the image pipeline (we added a handler for it).
     """
     tg_id = update.effective_user.id
     session = get_session(tg_id)
@@ -288,12 +306,20 @@ async def add_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     phone = session.get("phone")
-    text = (update.message.text or "").strip()
-    if not text:
-        await update.message.reply_text("Send the expense text (e.g., 'Lunch 120 Food').")
-        return ADD_QUERY
 
-    # parse using message_to_json helper
+    # If message is a photo, take the caption, otherwise take text
+    if update.message.photo:
+        text = (update.message.caption or "").strip()
+        if not text:
+            await update.message.reply_text("Please add a caption describing the item or price, or send a text message.")
+            return ADD_QUERY
+    else:
+        text = (update.message.text or "").strip()
+        if not text:
+            await update.message.reply_text("Send the expense text (e.g., 'Lunch 120 Food') or an image with caption.")
+            return ADD_QUERY
+
+    # Parse the text into entry (synchronous helper that calls LLM if needed)
     try:
         entry = parse_message_to_entry(text)
     except Exception as e:
@@ -301,6 +327,10 @@ async def add_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ADD_QUERY
 
     db = context.application.bot_data.get("db")
+    if db is None:
+        await update.message.reply_text("Server DB not available.")
+        return ConversationHandler.END
+
     try:
         inserted_id = await user_model.create_query(
             db,
@@ -339,7 +369,10 @@ def build_handler():
             ENTER_CONTACT_OR_PHONE: [MessageHandler((filters.CONTACT | filters.TEXT) & ~filters.COMMAND, receive_contact_or_phone)],
             ENTER_PASSWORD_CREATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_password_create)],
             RESET_NEW_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_reset_new_password)],
-            ADD_QUERY: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_query_handler)],
+            ADD_QUERY: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, add_query_handler),
+                MessageHandler(filters.PHOTO, handle_image_in_auth),  # photo delegation to LLM pipeline
+            ],
         },
         fallbacks=[CommandHandler("logout", logout), CommandHandler("cancel", cancel)],
         allow_reentry=True,
