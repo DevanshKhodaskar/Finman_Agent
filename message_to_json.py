@@ -46,49 +46,77 @@ CONF_THRESH = 0.70
 
 ALLOWED_CATEGORIES = {"Food", "Entertainment", "Travel", "Others"}
 
-
 def build_categorization_prompt_with_confidence(
     user_msg: str,
     image_present: bool,
     force_guess: bool = False,
 ) -> str:
-    if image_present:
-        img_section = (
-            "An image is attached. Use it along with the text to infer Name, category, and price.\n"
-        )
-    else:
-        img_section = "No image is attached. Use only the user text.\n"
+    """
+    Prompt that supports two image modes:
+      - RECEIPT / BILL / INVOICE: extract vendor name and TOTAL amount (treat whole bill as one expense).
+      - PRODUCT PACKAGING / PHOTO: extract product name, price (from caption or image if visible), and category.
+    Also supports text-only income detection (salary, credited, received, refund, deposit).
+    """
+
+    receipt_rules = (
+        "RECEIPT/BILL RULES:\n"
+        "- If the image is a bill, receipt, or invoice: extract the FINAL TOTAL amount (search for 'Total', 'Amount', "
+        "'Grand Total', 'Payable', etc.). Use the vendor/shop name from the top of the receipt as Name if available.\n"
+        "- Treat the whole bill as a single expense: do NOT attempt to return multiple line items.\n"
+        "- Set isIncome = false for receipts.\n"
+    )
+
+    product_rules = (
+        "PRODUCT/PACKAGING RULES:\n"
+        "- If the image is a product/package/photo (e.g., chips packet, bottle), try to identify the product name from the packaging.\n"
+        "- If the user provided a caption that contains a numeric value (e.g., '20rs', '₹20', '20'), prefer that as price.\n"
+        "- If price is visible on the packaging, extract it. Otherwise set price to null and low confidence.\n"
+    )
+
+    text_income_rules = (
+        "TEXT-ONLY / INCOME RULES:\n"
+        "- If the message text contains income keywords: salary, credited, received, deposit, refund -> isIncome = true.\n"
+        "- For lines like 'Salary 300000' or 'received 5000', set Name to a short label (e.g., 'Salary' or 'Income'), category = Others, and price = numeric value.\n"
+    )
 
     guess_note = (
-        "If uncertain, MAKE YOUR BEST-EFFORT GUESS and set confidence accordingly."
+        "If uncertain, MAKE YOUR BEST-EFFORT GUESS and set confidences appropriately."
         if force_guess
-        else "If uncertain, you may set values to null and provide low confidence."
+        else "If uncertain, you may return null for fields and set low confidence (0.0-0.4)."
     )
 
     return (
-        "You are a multimodal assistant with vision. Use the IMAGE (if provided) and the TEXT (if provided) to identify "
-        "the product Name, category, and price. Return EXACTLY one JSON object ONLY (no commentary, no explanation).\n\n"
+        "You are a multimodal assistant that extracts structured financial entries from text and images.\n\n"
 
-        "Your JSON object MUST contain these fields:\n"
-        "- Name: string or null\n"
-        "- name_confidence: float 0.0–1.0\n"
-        "- category: one of (Food, Entertainment, Travel, Others) or null\n"
-        "- category_confidence: float 0.0–1.0\n"
-        "- price: number or null (no currency symbols; convert '₹20' or '20rs' to 20)\n"
-        "- price_confidence: float 0.0–1.0\n\n"
+        "Return EXACTLY ONE raw JSON object ONLY with these fields:\n"
+        "  Name: string or null\n"
+        "  name_confidence: number (0.0-1.0)\n"
+        "  category: one of (Food, Entertainment, Travel, Others) or null\n"
+        "  category_confidence: number (0.0-1.0)\n"
+        "  price: number or null (convert '₹20', '20rs', 'Rs 20' to 20)\n"
+        "  price_confidence: number (0.0-1.0)\n"
+        "  isIncome: boolean\n\n"
 
-        "RULES:\n"
-        "1) Output ONLY a raw JSON object.\n"
-        "2) price MUST be numeric (integer or float).\n"
-        "3) If unsure, set fields to null and provide low confidence.\n"
-        "4) If guessing is required, provide your best guess.\n\n"
+        "GLOBAL RULES:\n"
+        "1) Output ONLY the JSON object, nothing else (no explanation, no trailing text).\n"
+        "2) price must be numeric when present. If only a caption contains the price, prefer caption value.\n"
+        "3) If the image is a receipt -> follow RECEIPT/BILL RULES below. If a product/package -> follow PRODUCT/PACKAGING RULES below.\n"
+        "4) If text contains income-related keywords use TEXT-ONLY/INCOME RULES.\n"
+        "5) Provide meaningful confidence values for each field. High confidence (>=0.7) means you are fairly certain.\n\n"
 
-        f"{img_section}"
-        f'User text: "{user_msg}"\n\n'
+        f"{receipt_rules}\n"
+        f"{product_rules}\n"
+        f"{text_income_rules}\n"
+
+        f"IMAGE_PRESENT: {image_present}\n"
+        f'USER_TEXT: \"{user_msg}\"\n\n'
+
         f"{guess_note}\n\n"
 
-        "Example output (do NOT include comments):\n"
-        '{"Name":"Lays","name_confidence":0.95,"category":"Food","category_confidence":0.9,"price":20,"price_confidence":0.98}\n'
+        "EXAMPLES (only JSON):\n"
+        '{"Name":"Apoorva Delicacies","name_confidence":0.92,"category":"Food","category_confidence":0.88,"price":635,"price_confidence":0.95,"isIncome":false}\n'
+        '{"Name":"Lays Classic","name_confidence":0.88,"category":"Food","category_confidence":0.80,"price":20,"price_confidence":0.93,"isIncome":false}\n'
+        '{"Name":"Salary","name_confidence":0.95,"category":"Others","category_confidence":0.8,"price":300000,"price_confidence":0.98,"isIncome":true}\n'
     )
 
 
@@ -225,14 +253,29 @@ def format_pretty_json(d: Dict[str, Any]) -> str:
 
 
 def needs_clarification(parsed: Dict[str, Any], thresh: float = CONF_THRESH):
+    """
+    Clarification logic:
+    - If the model is confident about PRICE (meaning it successfully found the receipt total),
+      we should NOT ask for clarification even if name/category confidence is low.
+    - Only when price itself is low confidence should we enter clarification mode.
+    """
+    price_conf = parsed.get("price_confidence", 0.0)
+
+    # If price is confident → accept immediately (especially for receipts)
+    if price_conf >= thresh:
+        return (False, [])
+
+    # Otherwise fall back to normal rules
     issues = []
     if parsed.get("name_confidence", 0.0) < thresh:
         issues.append("name")
     if parsed.get("category_confidence", 0.0) < thresh:
         issues.append("category")
-    if parsed.get("price_confidence", 0.0) < thresh:
+    if price_conf < thresh:
         issues.append("price")
+
     return (len(issues) > 0, issues)
+
 
 
 def _start_verif_question_issues(issues: list) -> str:
