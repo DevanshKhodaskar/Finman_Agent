@@ -26,7 +26,7 @@ CHOOSING, ENTER_CONTACT_OR_PHONE, ENTER_PASSWORD_CREATE, ADD_QUERY, RESET_NEW_PA
 def main_menu_kb():
     """Main menu — Reset Password is always shown here."""
     return ReplyKeyboardMarkup(
-        [["Create account", "Authenticate"], ["RESET_PASSWORD"]],
+        [["Create account", "Authenticate"], ["Reset password"]],
         one_time_keyboard=True,
         resize_keyboard=True,
     )
@@ -108,30 +108,50 @@ async def handle_image_in_auth(update: Update, context: ContextTypes.DEFAULT_TYP
             pass
     return ADD_QUERY
 
-
 async def receive_contact_or_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Handle contact share or a typed phone number.
-    Branch by context.user_data['intent'] which is set by choice_handler.
+    STRICT: only accept a shared contact that is the sender's own contact.
+    We do NOT accept typed phone numbers for security (those could be anyone's).
     """
     msg = update.message
     tg_user = update.effective_user
     tg_id = tg_user.id
 
-    intent = (context.user_data.get("intent") or "").lower()
+    # Must be a contact share. Reject plain typed numbers.
     contact = msg.contact
-    raw_phone = None
-    if contact:
-        raw_phone = contact.phone_number
-        if getattr(contact, "user_id", None) is not None and int(contact.user_id) != int(tg_id):
-            await msg.reply_text("Please share *your own* contact using the Share Contact button (not someone else's).", parse_mode="Markdown")
-            return ENTER_CONTACT_OR_PHONE
-    else:
-        raw_phone = msg.text or ""
+    if contact is None:
+        # Reject typed numbers — require Share Contact button for safety.
+        await msg.reply_text(
+            "For security we require you to *share your contact* using the Share Contact button 📱.\n"
+            "Please press 'Share contact' and choose your own contact. Typed phone numbers are not allowed.",
+            parse_mode="Markdown",
+        )
+        return ENTER_CONTACT_OR_PHONE
 
+    # If contact.user_id exists, it should match the sender.
+    # Some clients may set contact.user_id to None — in that case also reject (force Share Contact button).
+    contact_user_id = getattr(contact, "user_id", None)
+    if contact_user_id is None:
+        await msg.reply_text(
+            "Please use the Share Contact button (it identifies the contact as yours). "
+            "If your client didn't attach the contact user id, try using the button again.",
+            parse_mode="Markdown",
+        )
+        return ENTER_CONTACT_OR_PHONE
+
+    # If the shared contact belongs to someone else, reject.
+    if int(contact_user_id) != int(tg_id):
+        await msg.reply_text(
+            "Please share *your own* contact using the Share Contact button (not someone else's).",
+            parse_mode="Markdown",
+        )
+        return ENTER_CONTACT_OR_PHONE
+
+    # At this point the contact is the user's own contact and is safe to use.
+    raw_phone = contact.phone_number
     phone = normalize_phone(raw_phone)
     if not phone:
-        await msg.reply_text("Invalid phone number. Please share contact or enter a valid 10-digit number.")
+        await msg.reply_text("The shared contact's phone number looks invalid. Please share a valid contact.")
         return ENTER_CONTACT_OR_PHONE
 
     # Save phone in session (used across states)
@@ -146,6 +166,7 @@ async def receive_contact_or_phone(update: Update, context: ContextTypes.DEFAULT
 
     user = await user_model.find_user_by_phone(db, phone)
 
+    intent = (context.user_data.get("intent") or "").lower()
     if not intent:
         intent = "authenticate" if user else "create"
 
@@ -190,9 +211,6 @@ async def receive_contact_or_phone(update: Update, context: ContextTypes.DEFAULT
             await msg.reply_text("No account found. Please send a password to create your website account (this password will be used for website login).", reply_markup=ReplyKeyboardRemove())
             return ENTER_PASSWORD_CREATE
 
-    await msg.reply_text("Unexpected flow. Send /start to begin again.", reply_markup=ReplyKeyboardRemove())
-    destroy_session(tg_id)
-    return ConversationHandler.END
 
 
 async def receive_password_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
