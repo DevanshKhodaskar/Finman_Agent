@@ -346,7 +346,7 @@ async def add_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     db = context.application.bot_data.get("db")
     if db is None:
-        await update.message.reply_text("Server DB not available.")
+        await update.message.reply_text("🔌 Oops! We're having trouble connecting to our servers.\nPlease try again shortly.")
         return ConversationHandler.END
 
     try:
@@ -360,10 +360,19 @@ async def add_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             telegram_id=tg_id,
         )
     except Exception as e:
-        await update.message.reply_text(f"Failed to save query: {e}")
+        await update.message.reply_text("❌ *Couldn't save your expense.*\n\nPlease try again in a moment.", parse_mode="Markdown")
         return ADD_QUERY
 
-    await update.message.reply_text(f"Saved ✅ ID: {inserted_id}")
+    name = entry.get("name", "Unknown")
+    category = entry.get("category", "uncategorized")
+    price = entry.get("price", 0)
+    await update.message.reply_text(
+        f"✅ *Expense saved!*\n\n"
+        f"📝 *{name}*\n"
+        f"📁 Category: {category}\n"
+        f"💰 Amount: ₹{price}",
+        parse_mode="Markdown"
+    )
     return ADD_QUERY
 
 

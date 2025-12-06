@@ -217,8 +217,11 @@ async def download_image_base64(file: File) -> str:
 
 # ---------------- utility & verification helpers ----------------
 def format_pretty_json(d: Dict[str, Any]) -> str:
-    out = {"Name": d.get("Name"), "category": d.get("category"), "price": d.get("price")}
-    return json.dumps(out, ensure_ascii=False, indent=2)
+    """Format parsed expense data in a user-friendly way."""
+    name = d.get("Name") or d.get("name") or "Unknown"
+    category = d.get("category") or "Unknown"
+    price = d.get("price") or 0
+    return f"📝 *{name}*\n📁 Category: {category}\n💰 Amount: ₹{price}"
 
 
 def needs_clarification(parsed: Dict[str, Any], thresh: float = CONF_THRESH):
@@ -234,14 +237,14 @@ def needs_clarification(parsed: Dict[str, Any], thresh: float = CONF_THRESH):
 
 def _start_verif_question_issues(issues: list) -> str:
     if not issues:
-        return "Is this correct? Reply 'yes' to confirm or 'no' to correct."
+        return "✅ *Does this look correct?*\n\nReply *yes* to save or *no* to make changes."
     if issues == ["price"]:
-        return "I couldn't confidently determine the price. What's the price (e.g., '10rs')?"
+        return "💰 *What's the price?*\n\nI couldn't determine the amount. Please reply with the price (e.g., \"50\" or \"₹150\")."
     if issues == ["name"]:
-        return "I couldn't confidently determine the product name. What is the product called?"
+        return "📝 *What's the item name?*\n\nI couldn't identify the product. Please tell me what you purchased."
     if issues == ["category"]:
-        return "I couldn't confidently determine the category. Which of Food / Entertainment / Travel / Others is it?"
-    return "I'm unsure about: " + ", ".join(issues) + ". Could you provide those values? (You can reply like: Name, category, price)"
+        return "📁 *Which category?*\n\nPlease choose: *Food* / *Entertainment* / *Travel* / *Others*"
+    return "🤔 *Need a bit more info!*\n\nI'm unsure about: *" + "*, *".join(issues) + "*\n\nPlease provide these details (e.g., \"Coffee, Food, 50\")."
 
 
 # ---------------- DB helper to store a query using your schema ----------------
@@ -384,9 +387,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 inserted = await _store_query_for_user(db, update.effective_user.id, parsed, session_phone=session_phone)
             pretty = format_pretty_json(parsed)
             if inserted:
-                await update.message.reply_text(f"Confirmed and saved ✅\n{pretty}\nID: {inserted}")
+                await update.message.reply_text(f"✅ *Saved successfully!*\n\n{pretty}", parse_mode="Markdown")
             else:
-                await update.message.reply_text(f"Confirmed. I couldn't save to DB (user not linked or DB error).\n{pretty}")
+                await update.message.reply_text(f"⚠️ *Confirmed but couldn't save.*\n\nThere was an issue saving to the database.\n\n{pretty}", parse_mode="Markdown")
             context.chat_data.pop("pending", None)
             return
 
@@ -411,28 +414,29 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     inserted = await _store_query_for_user(db, update.effective_user.id, parsed)
                 pretty = format_pretty_json(parsed)
                 if inserted:
-                    await update.message.reply_text(f"Confirmed and saved ✅\n{pretty}\nID: {inserted}")
+                    await update.message.reply_text(f"✅ *Saved successfully!*\n\n{pretty}", parse_mode="Markdown")
                 else:
-                    await update.message.reply_text(f"Confirmed. I couldn't save to DB (user not linked or DB error).\n{pretty}")
+                    await update.message.reply_text(f"⚠️ *Confirmed but couldn't save.*\n\nThere was an issue saving to the database.\n\n{pretty}", parse_mode="Markdown")
                 context.chat_data.pop("pending", None)
                 return
             else:
                 pending["substage"] = "choose_field"
                 context.chat_data["pending"] = pending
                 await update.message.reply_text(
-                    "Which field would you like to correct? Reply with: name / category / price / all"
+                    "📝 *Which field would you like to correct?*\n\nReply with: `name` / `category` / `price` / `all`",
+                    parse_mode="Markdown"
                 )
                 return
 
         if stage == "choose_field":
             choice = user_text.strip().lower()
             if choice not in ("name", "category", "price", "all"):
-                await update.message.reply_text("Please reply with one of: name / category / price / all")
+                await update.message.reply_text("🤔 Please reply with one of: `name` / `category` / `price` / `all`", parse_mode="Markdown")
                 return
             pending["substage"] = "await_correction"
             pending["choice"] = choice
             context.chat_data["pending"] = pending
-            await update.message.reply_text(f"Please send the corrected value for '{choice}'.")
+            await update.message.reply_text(f"✏️ Please send the corrected value for *{choice}*.", parse_mode="Markdown")
             return
 
         if stage == "await_correction":
@@ -451,7 +455,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parsed = _normalize_confidence_parsed(parsed_try)
                 else:
                     await update.message.reply_text(
-                        "Couldn't parse that full JSON. Please send corrected Name, category and price as a JSON or correct fields one by one."
+                        "🤔 *Couldn't understand that format.*\n\nPlease send the corrected values as JSON or correct fields one by one.",
+                        parse_mode="Markdown"
                     )
                     return
 
@@ -459,7 +464,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pending["substage"] = "await_verify_response"
             context.chat_data["pending"] = pending
             await update.message.reply_text(
-                "Got it. " + ("Confirm this:\n" + format_pretty_json(parsed))
+                f"👍 *Got it!* Please confirm this is correct:\n\n{format_pretty_json(parsed)}\n\nReply *yes* to save or *no* to make changes.",
+                parse_mode="Markdown"
             )
             return
 
@@ -477,9 +483,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             inserted = await _store_query_for_user(db, update.effective_user.id, parsed)
         pretty = format_pretty_json(parsed)
         if inserted:
-            await update.message.reply_text(f"{pretty}\nSaved ✅ ID: {inserted}")
+            await update.message.reply_text(f"✅ *Saved successfully!*\n\n{pretty}", parse_mode="Markdown")
         else:
-            await update.message.reply_text(f"{pretty}\nI couldn't save this (user not linked or DB error).")
+            await update.message.reply_text(f"⚠️ *Couldn't save this expense.*\n\nThere was an issue with the database.\n\n{pretty}", parse_mode="Markdown")
         return
 
     context.chat_data["pending"] = {
@@ -499,7 +505,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     photo = update.message.photo
     if not photo:
-        await update.message.reply_text("No photo found in the message.")
+        await update.message.reply_text("📷 *No image found.*\n\nPlease send a photo of your receipt or bill.", parse_mode="Markdown")
         return
 
     caption = (update.message.caption or "").strip()
@@ -509,7 +515,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         image_b64 = await download_image_base64(file_obj)
     except Exception as e:
-        await update.message.reply_text(f"Failed to download image: {e}")
+        await update.message.reply_text("📷 *Couldn't process your image.*\n\nPlease try sending it again or use a smaller image.", parse_mode="Markdown")
         return
 
     # Run LLM in executor (blocking), to avoid blocking event loop
@@ -521,7 +527,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as e:
         print("LLM invocation failed:", e)
-        await update.message.reply_text("Failed to run model. Try again later.")
+        await update.message.reply_text("⚠️ *Something went wrong.*\n\nPlease try again in a moment.", parse_mode="Markdown")
         return
 
     ask, issues = needs_clarification(parsed)
@@ -542,9 +548,9 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             inserted = await _store_query_for_user(db, update.effective_user.id, parsed, session_phone=session_phone)
         pretty = format_pretty_json(parsed)
         if inserted:
-            await update.message.reply_text(f"{pretty}\nSaved ✅ ID: {inserted}")
+            await update.message.reply_text(f"📷 *Expense from image saved!*\n\n{pretty}", parse_mode="Markdown")
         else:
-            await update.message.reply_text(f"{pretty}\nI couldn't save this (user not linked or DB error).")
+            await update.message.reply_text(f"⚠️ *Couldn't save this expense.*\n\nThere was an issue with the database.\n\n{pretty}", parse_mode="Markdown")
         return
 
     # If low confidence -> ask clarifying question and save pending
@@ -561,7 +567,13 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # NOTE: start_command/main are kept for standalone running/testing of this module.
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Bot ready. Send text or an image. I will guess fields and ask you only when unsure."
+        "🤖 *Budget Manager is ready!*\n\n"
+        "Send me a text message or photo of a receipt, and I'll help you track your expenses.\n\n"
+        "💡 *Examples:*\n"
+        "• \"Coffee ₹50\"\n"
+        "• \"Lunch at restaurant 350\"\n"
+        "• Photo of a bill or receipt",
+        parse_mode="Markdown"
     )
 
 

@@ -137,14 +137,14 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     db = context.bot_data.get("db")
     if db is None:
-        await msg.reply_text("❌ Server DB not available. Contact admin.")
+        await msg.reply_text("🔌 Oops! We're having trouble connecting to our servers.\nPlease try again in a few minutes or contact support.")
         return
 
     try:
         is_auth = await authenticate(contact_phone, contact_user_id, tg_id, db)
     except Exception as e:
         print("Error during authenticate():", e)
-        await msg.reply_text("❌ Internal error during authentication. Try again later.")
+        await msg.reply_text("⚠️ Something went wrong during authentication.\nPlease wait a moment and try again.")
         return
 
     printed = {
@@ -168,9 +168,12 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not is_auth:
         await msg.reply_text(
-            "❌ Authentication failed.\n"
-            "You must press the *Share Phone Number* button and share *your own* contact.\n"
-            "Also make sure your phone number exists in our system (we require pre-registered users).",
+            "❌ *Authentication Failed*\n\n"
+            "This could happen because:\n"
+            "• You didn't use the *Share Phone Number* button\n"
+            "• You shared someone else's contact instead of your own\n"
+            "• Your phone number isn't registered in our system yet\n\n"
+            "💡 *Tip:* Press the button below and select your own contact to try again.",
             parse_mode="Markdown",
             reply_markup=ReplyKeyboardRemove(),
         )
@@ -192,8 +195,9 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print("Warning: failed to write telegram_id to user document:", e)
         await msg.reply_text(
-            "⚠️ Authentication succeeded locally but failed to persist link to the database. "
-            "Contact admin if you face issues saving queries.",
+            "⚠️ *Partial Success*\n\n"
+            "You're authenticated, but we had a small hiccup saving your details.\n"
+            "Don't worry — you can still use the bot! If you run into issues, just contact support.",
             reply_markup=ReplyKeyboardRemove(),
         )
         return
@@ -205,7 +209,10 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
     await msg.reply_text(
-        "✅ Authentication successful!\nYour Telegram account is now linked to the stored phone number.",
+        "🎉 *You're all set!*\n\n"
+        "Your Telegram account is now linked to your phone number.\n"
+        "You can start tracking expenses by sending text or images!",
+        parse_mode="Markdown",
         reply_markup=ReplyKeyboardRemove(),
     )
 
@@ -213,7 +220,10 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     button = KeyboardButton(text="Share Phone Number 📱", request_contact=True)
     keyboard = ReplyKeyboardMarkup([[button]], one_time_keyboard=True, resize_keyboard=True)
     await update.message.reply_text(
-        "Hi! To authenticate please share your phone number by pressing the button below.",
+        "👋 *Welcome to Budget Manager!*\n\n"
+        "To get started, please verify your phone number by tapping the button below.\n\n"
+        "📱 This helps us keep your expenses secure and linked to your account.",
+        parse_mode="Markdown",
         reply_markup=keyboard,
     )
 
@@ -251,7 +261,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="You are not authenticated. Send /start and press the 'Share Phone Number 📱' button to authenticate.",
+                text="🔐 *Please authenticate first!*\n\n"
+                     "Send /start and tap the 📱 *Share Phone Number* button to get started.",
+                parse_mode="Markdown",
             )
         except Exception as e:
             print("Warning: failed to send not-auth message:", e)
@@ -259,17 +271,25 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     db = context.bot_data.get("db")
     if db is None:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Server DB not available. Contact admin.")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="🔌 Oops! We're having trouble connecting to our servers.\nPlease try again shortly.")
         return
 
     db_user = await db.Users.find_one({"telegram_id": tg_id}) or await db.Users.find_one({"telegram_id": str(tg_id)})
     if not db_user:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="⚠️ User record not found. Please /start again to authenticate.")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="🔍 *Hmm, we couldn't find your account.*\n\nPlease send /start to authenticate again.",
+            parse_mode="Markdown"
+        )
         return
 
     phone = db_user.get("number") or db_user.get("phone") or db_user.get("mobile")
     if not phone:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="⚠️ User record missing phone number. Please re-authenticate.")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="⚠️ *Account issue detected.*\n\nYour account is missing phone info. Please send /start to re-authenticate.",
+            parse_mode="Markdown"
+        )
         return
 
     prior_pending = context.chat_data.get("pending")
@@ -302,21 +322,40 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         extra=norm.get("extra", {}),
                     )
                 except Exception as e:
-                    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Failed to store data: {e}")
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text="❌ *Couldn't save your expense.*\n\nPlease try again in a moment.",
+                        parse_mode="Markdown"
+                    )
                     print("add_query_for_user failed:", e)
                     return
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"✅ Saved your query! ID: {res.get('inserted_id')}")
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"✅ *Expense saved!*\n\n"
+                         f"📝 *{norm['name']}*\n"
+                         f"📁 Category: {norm['category']}\n"
+                         f"💰 Amount: ₹{norm['price']}",
+                    parse_mode="Markdown"
+                )
                 return
             else:
                 if handle_text:
                     await handle_text(update, context)
                 else:
-                    await context.bot.send_message(chat_id=update.effective_chat.id, text="Cannot process right now.")
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text="🤔 *Need more details!*\n\nPlease provide additional info about this expense.",
+                        parse_mode="Markdown"
+                    )
         else:
             if handle_text:
                 await handle_text(update, context)
             else:
-                await context.bot.send_message(chat_id=update.effective_chat.id, text="Cannot process right now.")
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="🤔 *Need more details!*\n\nPlease provide additional info about this expense.",
+                    parse_mode="Markdown"
+                )
 
         new_pending = context.chat_data.get("pending")
         if prior_pending and (not new_pending):
@@ -335,10 +374,21 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         extra=norm.get("extra", {}),
                     )
                 except Exception as e:
-                    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Failed to store confirmed data: {e}")
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text="❌ *Couldn't save your expense.*\n\nPlease try again in a moment.",
+                        parse_mode="Markdown"
+                    )
                     print("add_query_for_user failed on confirmed:", e)
                     return
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"✅ Saved confirmed query! ID: {res.get('inserted_id')}")
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"✅ *Expense confirmed & saved!*\n\n"
+                         f"📝 *{norm['name']}*\n"
+                         f"📁 Category: {norm['category']}\n"
+                         f"💰 Amount: ₹{norm['price']}",
+                    parse_mode="Markdown"
+                )
                 return
         return
 
@@ -353,7 +403,11 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 image_b64 = await download_image_base64(file_obj) if download_image_base64 else None
             except Exception as e:
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Failed to download image: {e}")
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="📷 *Couldn't process your image.*\n\nPlease try sending it again or use a smaller image.",
+                    parse_mode="Markdown"
+                )
                 return
 
             loop = asyncio.get_event_loop()
@@ -378,21 +432,40 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         extra=norm.get("extra", {}),
                     )
                 except Exception as e:
-                    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Failed to store image data: {e}")
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text="❌ *Couldn't save your expense.*\n\nPlease try again in a moment.",
+                        parse_mode="Markdown"
+                    )
                     print("add_query_for_user failed image:", e)
                     return
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"✅ Saved your query from image! ID: {res.get('inserted_id')}")
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"📷 *Expense from image saved!*\n\n"
+                         f"📝 *{norm['name']}*\n"
+                         f"📁 Category: {norm['category']}\n"
+                         f"💰 Amount: ₹{norm['price']}",
+                    parse_mode="Markdown"
+                )
                 return
             else:
                 if handle_image:
                     await handle_image(update, context)
                 else:
-                    await context.bot.send_message(chat_id=update.effective_chat.id, text="Cannot process right now.")
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text="🤔 *Need more details about this image!*\n\nPlease add a caption describing the item and price.",
+                        parse_mode="Markdown"
+                    )
         else:
             if handle_image:
                 await handle_image(update, context)
             else:
-                await context.bot.send_message(chat_id=update.effective_chat.id, text="Cannot process right now.")
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text="🤔 *Need more details about this image!*\n\nPlease add a caption describing the item and price.",
+                    parse_mode="Markdown"
+                )
 
         new_pending = context.chat_data.get("pending")
         if prior_pending and (not new_pending):
@@ -411,16 +484,34 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         extra=norm.get("extra", {}),
                     )
                 except Exception as e:
-                    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Failed to store confirmed image data: {e}")
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text="❌ *Couldn't save your expense.*\n\nPlease try again in a moment.",
+                        parse_mode="Markdown"
+                    )
                     print("add_query_for_user failed on image confirmed:", e)
                     return
-                await context.bot.send_message(chat_id=update.effective_chat.id, text=f"✅ Saved confirmed query from image! ID: {res.get('inserted_id')}")
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"📷 *Expense confirmed & saved!*\n\n"
+                         f"📝 *{norm['name']}*\n"
+                         f"📁 Category: {norm['category']}\n"
+                         f"💰 Amount: ₹{norm['price']}",
+                    parse_mode="Markdown"
+                )
                 return
         return
 
     else:
         try:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Unsupported message type. Please send text or an image.")
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="🤷 *I can only process text or images.*\n\n"
+                     "Try sending:\n"
+                     "• A text message like \"Coffee ₹50\"\n"
+                     "• A photo of a receipt or bill",
+                parse_mode="Markdown"
+            )
         except Exception as e:
             print("Warning: failed to send unsupported-type message:", e)
         return
