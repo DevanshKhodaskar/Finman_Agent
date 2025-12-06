@@ -323,7 +323,7 @@ async def _store_query_for_user(db, telegram_id: int, parsed: Dict[str, Any], se
                 user = await db.Users.find_one({"telegram_username": {"$exists": True}})
             if not user:
                 return None
-            phone = user.get("number") or user.get("phone_number") or user.get("phone") or user.get("mobile")
+            phone = user.get("phone_number") or user.get("phone_number") or user.get("phone") or user.get("mobile")
             if not phone:
                 return None
 

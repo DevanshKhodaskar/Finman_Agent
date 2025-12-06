@@ -16,7 +16,7 @@ async def find_user_by_phone(db: AsyncIOMotorDatabase, phone10: str) -> Optional
     """
     if not phone10:
         return None
-    return await db.Users.find_one({"$or": [{"number": phone10}, {"phone_number": phone10}]})
+    return await db.Users.find_one({"$or": [{"phone_number": phone10}, {"phone_number": phone10}]})
 
 async def find_user_by_telegram(db: AsyncIOMotorDatabase, tg_id: int) -> Optional[Dict[str, Any]]:
     if tg_id is None:
@@ -33,13 +33,13 @@ async def create_user(db: AsyncIOMotorDatabase, phone10: str, password_hash: str
 
     now = datetime.utcnow()
 
-    filter_q = {"number": phone10}
+    filter_q = {"phone_number": phone10}
 
     update = {
         # INSERT-ONLY fields
         "$setOnInsert": {
             "name": name or "",
-            "number": phone10,
+            "phone_number": phone10,
             # "phone_number": phone10,
             "telegram_username": "",
             "telegram_id": 0,
@@ -73,7 +73,7 @@ async def update_telegram_mapping(db: AsyncIOMotorDatabase, phone10: str, tg_id:
         raise ValueError("phone required for update_telegram_mapping")
 
     await db.Users.update_one(
-        {"number": phone10},
+        {"phone_number": phone10},
         {
             "$set": {
                 "telegram_id": int(tg_id) if tg_id is not None else 0,
@@ -88,7 +88,7 @@ async def update_password_hash(db: AsyncIOMotorDatabase, phone10: str, new_hash:
     if not phone10:
         raise ValueError("phone required for update_password_hash")
     await db.Users.update_one(
-        {"number": phone10},
+        {"phone_number": phone10},
         {"$set": {"password_hash": new_hash, "updated_at": datetime.utcnow()}}
     )
 

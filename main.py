@@ -113,7 +113,7 @@ async def authenticate(contact_phone: str, contact_user_id: Optional[int], tg_us
     norm = normalize_phone(contact_phone)
     if not norm or len(norm) != 10:
         return False
-    user = await db.Users.find_one({"number": norm})
+    user = await db.Users.find_one({"phone_number": norm})
     if not user:
         return False
     return True
@@ -191,7 +191,7 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_fields["telegram_username"] = tg_user.username
 
     try:
-        await db.Users.update_one({"number": norm_phone}, {"$set": set_fields}, upsert=False)
+        await db.Users.update_one({"phone_number": norm_phone}, {"$set": set_fields}, upsert=False)
     except Exception as e:
         print("Warning: failed to write telegram_id to user document:", e)
         await msg.reply_text(
@@ -203,7 +203,7 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        user_after = await db.Users.find_one({"number": norm_phone}, {"_id": 1, "number": 1, "telegram_id": 1, "telegram_username": 1})
+        user_after = await db.Users.find_one({"phone_number": norm_phone}, {"_id": 1, "phone_number": 1, "telegram_id": 1, "telegram_username": 1})
         print("User after update (contact_handler):", user_after)
     except Exception:
         pass
@@ -283,7 +283,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    phone = db_user.get("number") or db_user.get("phone") or db_user.get("mobile")
+    phone = db_user.get("phone_number") or db_user.get("phone") or db_user.get("mobile")
     if not phone:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -524,7 +524,7 @@ async def _create_indexes(db):
     """
     try:
         # create unique index on Users.number
-        await db.Users.create_index("number", unique=True)
+        await db.Users.create_index("phone_number", unique=True)
         print("✅ Created or ensured unique index on Users.number")
     except Exception as e:
         print("⚠️ Failed to create Users.number unique index:", e)
@@ -539,7 +539,7 @@ async def _create_indexes(db):
 # Bootstrap & run
 async def _create_indexes(db):
     try:
-        await db.Users.create_index("number", unique=True)
+        await db.Users.create_index("phone_number", unique=True)
     except Exception:
         pass
     try:

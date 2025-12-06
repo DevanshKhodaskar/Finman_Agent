@@ -79,13 +79,13 @@ async def add_user(
 
     set_doc = {
         "name": name,
-        "number": norm,
+        "phone_number": norm,
         "telegram_username": telegram_username,
         "telegram_id": int(telegram_id) if telegram_id is not None else None
     }
 
     res = await db.Users.update_one(
-        {"number": norm},
+        {"phone_number": norm},
         {
             "$set": set_doc,
             "$setOnInsert": {"created_at": datetime.utcnow()},
@@ -117,7 +117,7 @@ async def add_query_for_user(
     norm = normalize_to_10digits(number)
     if not norm or len(norm) != 10:
         raise ValueError("number must normalize to exactly 10 digits (no country code).")
-    user = await db.Users.find_one({"number": norm}, {"telegram_id": 1})
+    user = await db.Users.find_one({"phone_number": norm}, {"telegram_id": 1})
     if not user:
         raise LookupError(f"No user found with number {norm}. Insert user first.")
     price_num = ensure_price_numeric(price)
@@ -147,11 +147,11 @@ async def upsert_user_and_add_query(
     upsert_res = await add_user(
         db,
         name=user_obj.get("name"),
-        number=user_obj.get("number"),
+        number=user_obj.get("phone_number"),
         telegram_username=user_obj.get("telegram_username"),
         telegram_id=user_obj.get("telegram_id")
     )
-    norm = normalize_to_10digits(user_obj.get("number"))
+    norm = normalize_to_10digits(user_obj.get("phone_number"))
     query_res = await add_query_for_user(
         db,
         number=norm,
@@ -189,7 +189,7 @@ async def create_recommended_indexes_safe(db: AsyncIOMotorDatabase):
             key_items = list(key.items())
         else:
             key_items = key
-        if key_items == [("number", 1)]:
+        if key_items == [("phone_number", 1)]:
             number_index_name = name
             number_index_info = info
             break
@@ -199,12 +199,12 @@ async def create_recommended_indexes_safe(db: AsyncIOMotorDatabase):
         if not number_index_info.get("unique", False):
             print(f"Users: index '{number_index_name}' on number exists but is not unique - will be replaced.")
             await users.drop_index(number_index_name)
-            await users.create_index([("number", 1)], unique=True, name="number_unique")
+            await users.create_index([("phone_number", 1)], unique=True, name="number_unique")
         else:
             print(f"Users: unique index on 'number' exists (name: {number_index_name}).")
     else:
         print("Users: creating unique index on 'number' -> number_unique")
-        await users.create_index([("number", 1)], unique=True, name="number_unique")
+        await users.create_index([("phone_number", 1)], unique=True, name="number_unique")
 
     # telegram_id unique sparse
     existing_users_indexes = await users.index_information()

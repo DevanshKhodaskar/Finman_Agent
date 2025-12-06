@@ -65,7 +65,7 @@ async def main():
         print("\n-- Upsert user + add query combined --")
         combined = await upsert_user_and_add_query(
             db,
-            user_obj={"name": "Alice", "number": "+919812345678", "telegram_username": "alice", "telegram_id": 222333444},
+            user_obj={"name": "Alice", "phone_number": "+919812345678", "telegram_username": "alice", "telegram_id": 222333444},
             query_obj={"name": "Pepsi", "category": "Drink", "price": 40}
         )
         print("combined result:", combined)
