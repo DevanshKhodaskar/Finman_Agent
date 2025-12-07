@@ -1,27 +1,22 @@
-# utils/crypto.py
 import bcrypt
-import asyncio
+import hmac
+import hashlib
+import os
 
-async def generate_hash_and_salt(password: str):
-    """
-    Generates a bcrypt salt and bcrypt hash.
-    This salt can be reused in Node to generate the same hash.
-    """
+# Load secret from environment variable
+SECRET = os.environ.get("SECRET_KEY")
+if not SECRET:
+    raise ValueError("SECRET_KEY environment variable not set")
+SECRET = SECRET.encode("utf-8")  # convert to bytes
+
+def pre_hash(password: str) -> bytes:
+    return hmac.new(SECRET, password.encode(), hashlib.sha256).digest()
+
+async def hash_password(password: str) -> str:
     loop = asyncio.get_event_loop()
-    salt = await loop.run_in_executor(None, bcrypt.gensalt)       # random salt
-    hashed = await loop.run_in_executor(                           # hash using the same salt
-        None, bcrypt.hashpw, password.encode("utf-8"), salt
-    )
-    return {
-        "salt": salt.decode("utf-8"),      # SEND THIS to backend
-        "hash": hashed.decode("utf-8")     # Stored password_hash
-    }
+    hashed = await loop.run_in_executor(None, bcrypt.hashpw, password.encode('utf-8'), bcrypt.gensalt())
+    return hashed.decode('utf-8')
 
 async def verify_password(password: str, hashed: str) -> bool:
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
-        None,
-        bcrypt.checkpw,
-        password.encode("utf-8"),
-        hashed.encode("utf-8")
-    )
+    return await loop.run_in_executor(None, bcrypt.checkpw, password.encode('utf-8'), hashed.encode('utf-8'))
