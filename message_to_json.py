@@ -293,7 +293,7 @@ def _start_verif_question_issues(issues: list) -> str:
 # ---------------- DB helper to store a query using your schema ----------------
 async def _store_query_for_user(db, telegram_id: int, parsed: Dict[str, Any], session_phone: Optional[str] = None) -> Optional[str]:
     """
-    Insert a document into db.Queries using the schema:
+    Insert a document into db.queries using the schema:
       phone_number: String,
       price: Number,
       name: String,
@@ -356,7 +356,7 @@ async def _store_query_for_user(db, telegram_id: int, parsed: Dict[str, Any], se
             print("DB is None in _store_query_for_user; aborting insert.")
             return None
 
-        res = await db.Queries.insert_one(doc)
+        res = await db.queries.insert_one(doc)
         return str(res.inserted_id)
     except Exception as e:
         print("DB insert failed in _store_query_for_user:", e)

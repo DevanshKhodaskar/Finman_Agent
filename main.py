@@ -520,7 +520,7 @@ async def _create_indexes(db):
     """
     Create necessary indexes. Safe to call repeatedly.
     - number: unique (users)
-    - phone_number: non-unique index for Queries (optional)
+    - phone_number: non-unique index for queries (optional)
     """
     try:
         # create unique index on users.number
@@ -530,10 +530,10 @@ async def _create_indexes(db):
         print("⚠️ Failed to create users.number unique index:", e)
 
     try:
-        await db.Queries.create_index("phone_number")
-        print("✅ Ensured index on Queries.phone_number")
+        await db.queries.create_index("phone_number")
+        print("✅ Ensured index on queries.phone_number")
     except Exception as e:
-        print("⚠️ Failed to create Queries.phone_number index:", e)
+        print("⚠️ Failed to create queries.phone_number index:", e)
 
 # -------------------------
 # Bootstrap & run
@@ -543,7 +543,7 @@ async def _create_indexes(db):
     except Exception:
         pass
     try:
-        await db.Queries.create_index("phone_number")
+        await db.queries.create_index("phone_number")
     except Exception:
         pass
 

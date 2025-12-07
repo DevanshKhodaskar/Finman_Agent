@@ -120,5 +120,5 @@ async def create_query(
         "telegram_id": str(telegram_id) if telegram_id is not None else None,
         "created_at": datetime.utcnow(),
     }
-    res = await db.Queries.insert_one(doc)
+    res = await db.queries.insert_one(doc)
     return str(res.inserted_id)
