@@ -132,7 +132,6 @@ def _try_fix_and_load_json(text: str) -> Optional[Dict[str, Any]]:
         except Exception:
             return None
 
-
 def _normalize_confidence_parsed(parsed: Dict[str, Any]) -> Dict[str, Any]:
     out = {
         "Name": parsed.get("Name") if parsed.get("Name") is not None else None,
@@ -141,6 +140,10 @@ def _normalize_confidence_parsed(parsed: Dict[str, Any]) -> Dict[str, Any]:
         "category_confidence": float(parsed.get("category_confidence") or 0.0),
         "price": parsed.get("price") if parsed.get("price") is not None else None,
         "price_confidence": float(parsed.get("price_confidence") or 0.0),
+        # propagate isIncome (model might return true/false or "true"/"false")
+        "isIncome": bool(parsed.get("isIncome") if not isinstance(parsed.get("isIncome"), str) else parsed.get("isIncome").lower() in ("true", "1", "yes")),
+        # optional: an isIncome confidence if model provides it; default 0.0
+        "isIncome_confidence": float(parsed.get("isIncome_confidence") or 0.0),
         "raw_model": parsed,
     }
 
@@ -153,6 +156,7 @@ def _normalize_confidence_parsed(parsed: Dict[str, Any]) -> Dict[str, Any]:
             out["category"] = "Others"
 
     return out
+
 
 
 def _build_human_message_with_optional_image(
