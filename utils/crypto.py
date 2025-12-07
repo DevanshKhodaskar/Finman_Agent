@@ -2,7 +2,6 @@ import bcrypt
 import hmac
 import hashlib
 import os
-import asyncio
 
 # Load secret from environment variable
 SECRET = os.environ.get("SECRET_KEY")
@@ -13,11 +12,11 @@ SECRET = SECRET.encode("utf-8")  # convert to bytes
 def pre_hash(password: str) -> bytes:
     return hmac.new(SECRET, password.encode(), hashlib.sha256).digest()
 
-async def hash_password(password: str) -> str:
-    loop = asyncio.get_event_loop()
-    hashed = await loop.run_in_executor(None, bcrypt.hashpw, password.encode('utf-8'), bcrypt.gensalt())
-    return hashed.decode('utf-8')
+def hash_password(password: str) -> str:
+    pre = pre_hash(password)
+    hashed = bcrypt.hashpw(pre, bcrypt.gensalt())
+    return hashed.decode()
 
-async def verify_password(password: str, hashed: str) -> bool:
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, bcrypt.checkpw, password.encode('utf-8'), hashed.encode('utf-8'))
+def verify_password(password: str, hashed: str) -> bool:
+    pre = pre_hash(password)
+    return bcrypt.checkpw(pre, hashed.encode())
