@@ -2,6 +2,7 @@ import bcrypt
 import hmac
 import hashlib
 import os
+import asyncio
 
 # Load secret from environment variable
 SECRET = os.environ.get("SECRET_KEY")
