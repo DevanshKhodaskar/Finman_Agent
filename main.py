@@ -104,7 +104,7 @@ async def authenticate(contact_phone: str, contact_user_id: Optional[int], tg_us
     """
     Returns True only if:
       - contact_user_id is provided and equals tg_user_id (shared their own contact)
-      - AND a user document exists in db.Users with number == normalized_10_digit_phone
+      - AND a user document exists in db.users with number == normalized_10_digit_phone
     """
     if contact_user_id is None or contact_user_id != tg_user_id:
         return False
@@ -113,7 +113,7 @@ async def authenticate(contact_phone: str, contact_user_id: Optional[int], tg_us
     norm = normalize_phone(contact_phone)
     if not norm or len(norm) != 10:
         return False
-    user = await db.Users.find_one({"phone_number": norm})
+    user = await db.users.find_one({"phone_number": norm})
     if not user:
         return False
     return True
@@ -191,7 +191,7 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_fields["telegram_username"] = tg_user.username
 
     try:
-        await db.Users.update_one({"phone_number": norm_phone}, {"$set": set_fields}, upsert=False)
+        await db.users.update_one({"phone_number": norm_phone}, {"$set": set_fields}, upsert=False)
     except Exception as e:
         print("Warning: failed to write telegram_id to user document:", e)
         await msg.reply_text(
@@ -203,7 +203,7 @@ async def contact_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        user_after = await db.Users.find_one({"phone_number": norm_phone}, {"_id": 1, "phone_number": 1, "telegram_id": 1, "telegram_username": 1})
+        user_after = await db.users.find_one({"phone_number": norm_phone}, {"_id": 1, "phone_number": 1, "telegram_id": 1, "telegram_username": 1})
         print("User after update (contact_handler):", user_after)
     except Exception:
         pass
@@ -274,7 +274,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=update.effective_chat.id, text="🔌 Oops! We're having trouble connecting to our servers.\nPlease try again shortly.")
         return
 
-    db_user = await db.Users.find_one({"telegram_id": tg_id}) or await db.Users.find_one({"telegram_id": str(tg_id)})
+    db_user = await db.users.find_one({"telegram_id": tg_id}) or await db.users.find_one({"telegram_id": str(tg_id)})
     if not db_user:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -519,15 +519,15 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _create_indexes(db):
     """
     Create necessary indexes. Safe to call repeatedly.
-    - number: unique (Users)
+    - number: unique (users)
     - phone_number: non-unique index for Queries (optional)
     """
     try:
-        # create unique index on Users.number
-        await db.Users.create_index("phone_number", unique=True)
-        print("✅ Created or ensured unique index on Users.number")
+        # create unique index on users.number
+        await db.users.create_index("phone_number", unique=True)
+        print("✅ Created or ensured unique index on users.number")
     except Exception as e:
-        print("⚠️ Failed to create Users.number unique index:", e)
+        print("⚠️ Failed to create users.number unique index:", e)
 
     try:
         await db.Queries.create_index("phone_number")
@@ -539,7 +539,7 @@ async def _create_indexes(db):
 # Bootstrap & run
 async def _create_indexes(db):
     try:
-        await db.Users.create_index("phone_number", unique=True)
+        await db.users.create_index("phone_number", unique=True)
     except Exception:
         pass
     try:

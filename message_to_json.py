@@ -314,13 +314,13 @@ async def _store_query_for_user(db, telegram_id: int, parsed: Dict[str, Any], se
         if not phone:
             tg_str = str(telegram_id)
             # try numeric, then string fields
-            user = await db.Users.find_one({"telegram_id": telegram_id})
+            user = await db.users.find_one({"telegram_id": telegram_id})
             if not user:
-                user = await db.Users.find_one({"telegram_id": tg_str})
+                user = await db.users.find_one({"telegram_id": tg_str})
             if not user:
                 # last-resort: find any user whose telegram_username exists and matches (low confidence)
                 # NOTE: we avoid over-broad queries in prod
-                user = await db.Users.find_one({"telegram_username": {"$exists": True}})
+                user = await db.users.find_one({"telegram_username": {"$exists": True}})
             if not user:
                 return None
             phone = user.get("phone_number") or user.get("phone_number") or user.get("phone") or user.get("mobile")

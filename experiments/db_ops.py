@@ -84,7 +84,7 @@ async def add_user(
         "telegram_id": int(telegram_id) if telegram_id is not None else None
     }
 
-    res = await db.Users.update_one(
+    res = await db.users.update_one(
         {"phone_number": norm},
         {
             "$set": set_doc,
@@ -117,7 +117,7 @@ async def add_query_for_user(
     norm = normalize_to_10digits(number)
     if not norm or len(norm) != 10:
         raise ValueError("number must normalize to exactly 10 digits (no country code).")
-    user = await db.Users.find_one({"phone_number": norm}, {"telegram_id": 1})
+    user = await db.users.find_one({"phone_number": norm}, {"telegram_id": 1})
     if not user:
         raise LookupError(f"No user found with number {norm}. Insert user first.")
     price_num = ensure_price_numeric(price)
@@ -169,12 +169,12 @@ async def upsert_user_and_add_query(
 async def create_recommended_indexes_safe(db: AsyncIOMotorDatabase):
     """
     Ensure:
-    - Users.number unique index exists (name: number_unique)
-    - Users.telegram_id unique sparse index exists (name: telegram_id_unique)
+    - users.number unique index exists (name: number_unique)
+    - users.telegram_id unique sparse index exists (name: telegram_id_unique)
     - queries index on (phone:1, time:-1) exists (name: phone_time_idx)
     Safe checks existing indexes and only creates/drops if necessary.
     """
-    users = db.Users
+    users = db.users
     queries = db.queries
 
     # Inspect existing users indexes
@@ -197,13 +197,13 @@ async def create_recommended_indexes_safe(db: AsyncIOMotorDatabase):
     # If exists and not unique -> drop and recreate as unique
     if number_index_name:
         if not number_index_info.get("unique", False):
-            print(f"Users: index '{number_index_name}' on number exists but is not unique - will be replaced.")
+            print(f"users: index '{number_index_name}' on number exists but is not unique - will be replaced.")
             await users.drop_index(number_index_name)
             await users.create_index([("phone_number", 1)], unique=True, name="number_unique")
         else:
-            print(f"Users: unique index on 'number' exists (name: {number_index_name}).")
+            print(f"users: unique index on 'number' exists (name: {number_index_name}).")
     else:
-        print("Users: creating unique index on 'number' -> number_unique")
+        print("users: creating unique index on 'number' -> number_unique")
         await users.create_index([("phone_number", 1)], unique=True, name="number_unique")
 
     # telegram_id unique sparse
@@ -218,13 +218,13 @@ async def create_recommended_indexes_safe(db: AsyncIOMotorDatabase):
         if key_items == [("telegram_id", 1)]:
             if info.get("unique", False):
                 telegram_ok = True
-                print(f"Users: unique index on 'telegram_id' exists (name: {name}).")
+                print(f"users: unique index on 'telegram_id' exists (name: {name}).")
             else:
-                print(f"Users: index {name} on telegram_id exists but not unique - replacing.")
+                print(f"users: index {name} on telegram_id exists but not unique - replacing.")
                 await users.drop_index(name)
             break
     if not telegram_ok:
-        print("Users: creating unique sparse index on 'telegram_id' -> telegram_id_unique")
+        print("users: creating unique sparse index on 'telegram_id' -> telegram_id_unique")
         await users.create_index([("telegram_id", 1)], unique=True, sparse=True, name="telegram_id_unique")
 
     # queries: phone+time

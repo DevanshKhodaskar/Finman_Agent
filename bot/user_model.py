@@ -16,12 +16,12 @@ async def find_user_by_phone(db: AsyncIOMotorDatabase, phone10: str) -> Optional
     """
     if not phone10:
         return None
-    return await db.Users.find_one({"$or": [{"phone_number": phone10}, {"phone_number": phone10}]})
+    return await db.users.find_one({"$or": [{"phone_number": phone10}, {"phone_number": phone10}]})
 
 async def find_user_by_telegram(db: AsyncIOMotorDatabase, tg_id: int) -> Optional[Dict[str, Any]]:
     if tg_id is None:
         return None
-    return await db.Users.find_one({"telegram_id": int(tg_id)})
+    return await db.users.find_one({"telegram_id": int(tg_id)})
 
 
 async def create_user(db: AsyncIOMotorDatabase, phone10: str, password_hash: str, name: str = "") -> Dict[str, Any]:
@@ -53,7 +53,7 @@ async def create_user(db: AsyncIOMotorDatabase, phone10: str, password_hash: str
     }
 
     try:
-        doc = await db.Users.find_one_and_update(
+        doc = await db.users.find_one_and_update(
             filter_q,
             update,
             upsert=True,
@@ -62,7 +62,7 @@ async def create_user(db: AsyncIOMotorDatabase, phone10: str, password_hash: str
         return doc
 
     except DuplicateKeyError:
-        return await db.Users.find_one(filter_q)
+        return await db.users.find_one(filter_q)
 
 
 async def update_telegram_mapping(db: AsyncIOMotorDatabase, phone10: str, tg_id: int, tg_username: Optional[str]):
@@ -72,7 +72,7 @@ async def update_telegram_mapping(db: AsyncIOMotorDatabase, phone10: str, tg_id:
     if not phone10:
         raise ValueError("phone required for update_telegram_mapping")
 
-    await db.Users.update_one(
+    await db.users.update_one(
         {"phone_number": phone10},
         {
             "$set": {
@@ -87,7 +87,7 @@ async def update_telegram_mapping(db: AsyncIOMotorDatabase, phone10: str, tg_id:
 async def update_password_hash(db: AsyncIOMotorDatabase, phone10: str, new_hash: str):
     if not phone10:
         raise ValueError("phone required for update_password_hash")
-    await db.Users.update_one(
+    await db.users.update_one(
         {"phone_number": phone10},
         {"$set": {"password_hash": new_hash, "updated_at": datetime.utcnow()}}
     )
