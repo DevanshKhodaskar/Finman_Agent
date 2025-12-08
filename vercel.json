@@ -1,58 +1,25 @@
 {
   "version": 2,
-  "projectSettings": {
-    "sourceFilesOutsideRootDirectory": true
-  },
   "env": {
     "TELEGRAM_BOT_TOKEN": "@TELEGRAM_BOT_TOKEN",
     "GROQ_API_KEY": "@GROQ_API_KEY",
-    "MONGODB_URI": "@MONGODB_URI",
-    "WEBHOOK_URL": "@WEBHOOK_URL",
+    "MONGO_URI": "@MONGO_URI",
     "MONGO_DB_NAME": "Finman"
   },
   "builds": [
     {
-      "src": "api/webhook.py",
+      "src": "api/index.py",
       "use": "@vercel/python@4",
       "config": {
         "maxLambdaSize": "3000mb",
-        "runtime": "python3.11",
-        "includeFiles": "api/**,bot/**,experiments/**,utils/**,*.py",
-        "excludeFiles": "tests/**,.git/**"
+        "runtime": "python3.11"
       }
     }
   ],
   "routes": [
     {
-      "src": "/webhook",
-      "dest": "api/webhook.py",
-      "methods": ["POST"],
-      "headers": {
-        "Cache-Control": "no-cache"
-      }
-    },
-    {
-      "src": "/health",
-      "dest": "api/webhook.py",
-      "methods": ["GET"]
-    },
-    {
-      "src": "/set-webhook",
-      "dest": "api/webhook.py",
-      "methods": ["POST"]
-    },
-    {
-      "src": "/api/(.*)",
-      "dest": "api/webhook.py"
+      "src": "/(.*)",
+      "dest": "api/index.py"
     }
-  ],
-  "functions": {
-    "api/webhook.py": {
-      "memory": 3008,
-      "maxDuration": 60,
-      "timeout": 60
-    }
-  },
-  "buildCommand": "pip install -r requirements.txt && echo 'Build complete'",
-  "installCommand": "pip install --upgrade pip && pip install -r requirements.txt"
+  ]
 }
