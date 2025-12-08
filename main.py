@@ -261,13 +261,28 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
-                text="🔐 *Please authenticate first!*\n\n"
-                     "Send /start and tap the 📱 *Share Phone Number* button to get started.",
-                parse_mode="Markdown",
+                text="""🌟 *Welcome to FinMan!*  
+Your personal finance buddy 🤝💜
+
+Here’s your quick menu:
+
+🆕 *Create Account*  
+🔐 *Authenticate*  
+🔄 *Reset Password*  
+📊 *Dashboard*
+
+⚠️ *Please authenticate first!*  
+Send */start* and tap the 📱 *Share Phone Number* button.
+
+🔄 To view this menu anytime, just type /start.
+
+Let’s manage your money smarter together 🚀💰""",
+                parse_mode="Markdown"
             )
         except Exception as e:
             print("Warning: failed to send not-auth message:", e)
         return
+
 
     db = context.bot_data.get("db")
     if db is None:
@@ -593,6 +608,7 @@ def main() -> None:
             from bot import auth_handlers
             app.add_handler(CommandHandler("reset", auth_handlers.reset_password_command))         # optional if you added reset_password_command
             app.add_handler(CommandHandler("reset_password", auth_handlers.reset_password_command))
+            
 
             print("Auth ConversationHandler registered.")
         except Exception as e:

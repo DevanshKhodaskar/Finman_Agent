@@ -1,5 +1,5 @@
 # bot/auth_handlers.py
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     CommandHandler,
     MessageHandler,
@@ -22,7 +22,7 @@ CHOOSING, WAIT_CONTACT, ENTER_PASSWORD_CREATE, RESET_NEW_PASSWORD, ADD_QUERY = r
 # Keyboards
 def main_menu_kb():
     return ReplyKeyboardMarkup(
-        [["Create Account", "Authenticate"], ["Reset Password"]],
+        [["Create Account", "Authenticate"], ["Reset Password", "Dashboard"]],
         one_time_keyboard=True, resize_keyboard=True
     )
 
@@ -34,13 +34,38 @@ def share_contact_kb():
 
 # Entry: /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Welcome! Choose an option:", reply_markup=main_menu_kb())
+    await update.message.reply_text("""🌟 *Welcome to FinMan!*  
+Your personal finance buddy 🤝💜
+
+Here’s your quick menu:
+
+🆕 *Create Account*  
+🔐 *Authenticate*  
+🔄 *Reset Password*  
+📊 *Dashboard*
+
+⚠️ *Please authenticate first!*  
+Send */start* and tap the 📱 *Share Phone Number* button.
+
+🔄 To view this menu anytime, just type /start.
+
+Let’s manage your money smarter together 🚀💰""", reply_markup=main_menu_kb())
     context.user_data.pop("intent", None)
     return CHOOSING
 
 # Handle main menu choice
 async def choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (update.message.text or "").strip().lower()
+    if text == "dashboard":
+        dashboard_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📊 Open Dashboard", url="https://github.com/DevanshKhodaskar/Finman_Web")]
+        ])
+        await update.message.reply_text(
+            "📊 *Click the button below to open your Dashboard:*",
+            parse_mode="Markdown",
+            reply_markup=dashboard_kb
+        )
+        return CHOOSING
     if text in ["create account", "authenticate", "reset password"]:
         context.user_data["intent"] = text.lower()
         await update.message.reply_text(
