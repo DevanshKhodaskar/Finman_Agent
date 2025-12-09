@@ -606,8 +606,8 @@ def main() -> None:
             app.add_handler(build_auth_handler())
                         # after app.add_handler(build_auth_handler()) or below that block:
             from bot import auth_handlers
-            app.add_handler(CommandHandler("reset", auth_handlers.reset_password_command))         # optional if you added reset_password_command
-            app.add_handler(CommandHandler("reset_password", auth_handlers.reset_password_command))
+            # app.add_handler(CommandHandler("reset", auth_handlers.reset_password_command))         # optional if you added reset_password_command
+            # app.add_handler(CommandHandler("reset_password", auth_handlers.reset_password_command))
             
 
             print("Auth ConversationHandler registered.")
