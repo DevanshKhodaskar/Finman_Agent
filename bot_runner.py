@@ -620,7 +620,13 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.ALL & ~filters.CONTACT, message_handler))
 
     print("Bot is starting (polling). Ask a user to /start and share contact.")
-    app.run_polling(poll_interval=1.0, allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    app.run_polling(
+    poll_interval=1.0,
+    allowed_updates=Update.ALL_TYPES,
+    drop_pending_updates=True,
+    stop_signals=None,  # 👈 important for running in a thread
+)
+
 
 if __name__ == "__main__":
     main()
