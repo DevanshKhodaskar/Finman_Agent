@@ -58,7 +58,7 @@ async def choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (update.message.text or "").strip().lower()
     if text == "dashboard":
         dashboard_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 Open Dashboard", url="https://github.com/DevanshKhodaskar/Finman_Web")]
+            [InlineKeyboardButton("📊 Open Dashboard", url="https://finmanagent.vercel.app/dashboard")]
         ])
         await update.message.reply_text(
             "📊 *Click the button below to open your Dashboard:*",
