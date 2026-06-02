@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "main.py", "use": "@vercel/python" }
+  ],
+  "routes": [
+    { "src": "^/(.*)$", "dest": "/main.py" }
+  ],
+  "functions": {
+    "main.py": {
+      "runtime": "python3.11"
+    }
+  },
+  "env": {
+    "TELEGRAM_BOT_TOKEN": "@TELEGRAM_BOT_TOKEN",
+    "MONGO_URI": "@MONGO_URI",
+    "GROQ_API_KEY": "@GROQ_API_KEY",
+    "MONGO_DB_NAME": "Finman",
+    "SECRET_KEY": "@SECRET_KEY"
+  }
+}
