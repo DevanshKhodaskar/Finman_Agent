@@ -566,7 +566,12 @@ def ensure_event_loop():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     return loop
-def main() -> None:
+def build_application():
+    """Construct and return a configured Application (without starting polling).
+
+    This allows running either polling (locally) or webhook-driven processing (serverless).
+    """
+    # Ensure a single event loop for the application (used by motor, httpx, telegram)
     loop = ensure_event_loop()
 
     # Initialize graph: prefer langchain_bot.create_graph, fallback to message_to_json.init_graph
@@ -580,6 +585,7 @@ def main() -> None:
                 maybe = message_init_graph()
                 graph = maybe
             except TypeError:
+                # async initializer
                 graph = loop.run_until_complete(message_init_graph())
             print("Using message_to_json.init_graph()")
         else:
@@ -587,7 +593,7 @@ def main() -> None:
     except Exception as e:
         print("Warning: failed to initialize graph:", e)
 
-    # Mongo
+    # Mongo: create client after the loop is set so motor binds to the correct loop
     client = AsyncIOMotorClient(MONGO_URI)
     db = client[MONGO_DB_NAME]
 
@@ -595,37 +601,56 @@ def main() -> None:
     loop.run_until_complete(_create_indexes(db))
 
     # Build app
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.bot_data["db"] = db
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    application.bot_data["db"] = db
     if graph:
-        app.bot_data["graph"] = graph
+        application.bot_data["graph"] = graph
+
+    # Attach the loop so external callers (webhook) can reuse it
+    setattr(application, "bot_loop", loop)
 
     # Register handlers: auth conversation, then core handlers
     if build_auth_handler:
         try:
-            app.add_handler(build_auth_handler())
-                        # after app.add_handler(build_auth_handler()) or below that block:
-            from bot import auth_handlers
-            # app.add_handler(CommandHandler("reset", auth_handlers.reset_password_command))         # optional if you added reset_password_command
-            # app.add_handler(CommandHandler("reset_password", auth_handlers.reset_password_command))
-            
-
+            application.add_handler(build_auth_handler())
             print("Auth ConversationHandler registered.")
         except Exception as e:
             print("Failed to register auth convo handler:", e)
 
     # Register existing handlers (these functions are defined in this file)
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(MessageHandler(filters.CONTACT, contact_handler))
-    app.add_handler(MessageHandler(filters.ALL & ~filters.CONTACT, message_handler))
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(MessageHandler(filters.CONTACT, contact_handler))
+    application.add_handler(MessageHandler(filters.ALL & ~filters.CONTACT, message_handler))
 
+    return application
+
+
+def main() -> None:
+    # Backwards-compatible entrypoint that runs polling (for local development)
+    application = build_application()
     print("Bot is starting (polling). Ask a user to /start and share contact.")
-    app.run_polling(
-    poll_interval=1.0,
-    allowed_updates=Update.ALL_TYPES,
-    drop_pending_updates=True,
-    stop_signals=None,  # 👈 important for running in a thread
-)
+    application.run_polling(
+        poll_interval=1.0,
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,
+        stop_signals=None,
+    )
+
+
+# Convenience: build a module-level application for webhook use by imports
+try:
+    application = build_application()
+except Exception as e:
+    print("Failed to build application at import time:", e)
+else:
+    try:
+        # Reuse the loop attached to the application (created in build_application)
+        loop = getattr(application, "bot_loop", None) or ensure_event_loop()
+        loop.run_until_complete(application.initialize())
+        setattr(application, "bot_loop", loop)
+        print("Telegram Application initialized at import time.")
+    except Exception as e:
+        print("Failed to initialize application at import time:", e)
 
 
 if __name__ == "__main__":
