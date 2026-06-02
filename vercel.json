@@ -6,11 +6,6 @@
   "routes": [
     { "src": "^/(.*)$", "dest": "/main.py" }
   ],
-  "functions": {
-    "main.py": {
-      "runtime": "python3.11"
-    }
-  },
   "env": {
     "TELEGRAM_BOT_TOKEN": "@TELEGRAM_BOT_TOKEN",
     "MONGO_URI": "@MONGO_URI",
