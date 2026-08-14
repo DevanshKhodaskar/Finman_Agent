@@ -1,64 +1,96 @@
 import os
-import asyncio
-from flask import Flask, request, abort
 
-from bot_runner import application as tg_application
+from fastapi import FastAPI, Request, HTTPException
 from telegram import Update
 
-app = Flask(__name__)
+from bot_runner import create_webhook_application
+
+
+app = FastAPI()
+
+tg_application = None
+
+
+@app.on_event("startup")
+async def startup():
+    global tg_application
+
+    print("🚀 Starting FinMan Telegram webhook...")
+
+    tg_application = await create_webhook_application()
+
+    print("✅ FinMan Telegram webhook ready.")
 
 
 @app.get("/")
-def health():
-    return "Bot is running ✅"
+async def health():
+    return {
+        "status": "ok",
+        "message": "FinMan Telegram Bot is running ✅"
+    }
 
 
-# Webhook endpoint to receive Telegram updates
-# Optional secret path segment: if WEBHOOK_SECRET is set it must match the URL segment.
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET") or os.environ.get("TELEGRAM_BOT_TOKEN")
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
 
+    if tg_application is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Telegram application not initialized"
+        )
 
-@app.post("/webhook/<secret>")
-def webhook(secret: str):
-    if not WEBHOOK_SECRET:
-        abort(403)
-    if secret != WEBHOOK_SECRET and secret != os.environ.get("TELEGRAM_BOT_TOKEN"):
-        abort(403)
+    # Optional Telegram secret-token
+    webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET")
 
-    data = request.get_json(force=True)
-    if not data:
-        return "", 400
+    if webhook_secret:
+        received_secret = request.headers.get(
+            "X-Telegram-Bot-Api-Secret-Token"
+        )
 
+        if received_secret != webhook_secret:
+            print("❌ Invalid Telegram webhook secret")
+
+            raise HTTPException(
+                status_code=403,
+                detail="Unauthorized"
+            )
+
+    # Get Telegram update
     try:
-        update = Update.de_json(data, tg_application.bot)
-    except Exception as e:
-        print("Failed to parse Update:", e)
-        return "", 400
+        data = await request.json()
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid JSON"
+        )
 
-    # Process update using the application's processing pipeline
+    # Convert JSON to Telegram Update
     try:
-        # Reuse the event loop that initialized the Telegram Application to avoid
-        # "attached to different loop" errors. Fall back to the current loop.
-        loop = getattr(tg_application, "bot_loop", None) or asyncio.get_event_loop()
-        coro = tg_application.process_update(update)
-        loop.run_until_complete(coro)
+        update = Update.de_json(
+            data,
+            tg_application.bot
+        )
     except Exception as e:
-        print("Error while processing update:", e)
-        return "", 500
+        print("❌ Failed to parse update:", repr(e))
 
-    return "", 200
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid Telegram update"
+        )
 
+    # Process update
+    try:
+        await tg_application.process_update(update)
 
-if __name__ == "__main__":
-    # Local dev: run polling bot in background then start Flask server
-    import threading
-    import bot_runner
+    except Exception as e:
+        print(
+            "❌ Error processing Telegram update:",
+            repr(e)
+        )
 
-    def run_polling():
-        bot_runner.main()
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to process update"
+        )
 
-    t = threading.Thread(target=run_polling, daemon=True)
-    t.start()
-
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    return {"ok": True}

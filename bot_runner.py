@@ -566,69 +566,111 @@ def ensure_event_loop():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     return loop
-def build_application():
-    """Construct and return a configured Application (without starting polling).
 
-    This allows running either polling (locally) or webhook-driven processing (serverless).
+
+async def build_application_async():
     """
-    # Ensure a single event loop for the application (used by motor, httpx, telegram)
-    loop = ensure_event_loop()
+    Build Telegram application for async webhook/serverless use.
+    """
 
-    # Initialize graph: prefer langchain_bot.create_graph, fallback to message_to_json.init_graph
+    # -----------------------------------------
+    # Initialize graph
+    # -----------------------------------------
     graph = None
+
     try:
         if langchain_create_graph:
             graph = langchain_create_graph()
             print("Using langchain_bot.create_graph()")
+
         elif message_init_graph:
-            try:
-                maybe = message_init_graph()
-                graph = maybe
-            except TypeError:
-                # async initializer
-                graph = loop.run_until_complete(message_init_graph())
+            result = message_init_graph()
+
+            if asyncio.iscoroutine(result):
+                graph = await result
+            else:
+                graph = result
+
             print("Using message_to_json.init_graph()")
+
         else:
-            print("No graph initializer found (langchain_bot.create_graph or message_to_json.init_graph). Continuing without graph.")
+            print("No graph initializer found.")
+
     except Exception as e:
         print("Warning: failed to initialize graph:", e)
 
-    # Mongo: create client after the loop is set so motor binds to the correct loop
+    # -----------------------------------------
+    # MongoDB
+    # -----------------------------------------
     client = AsyncIOMotorClient(MONGO_URI)
     db = client[MONGO_DB_NAME]
 
-    # create indexes (idempotent). Must run before handlers may create users.
-    loop.run_until_complete(_create_indexes(db))
+    await _create_indexes(db)
 
-    # Build app
+    # -----------------------------------------
+    # Telegram Application
+    # -----------------------------------------
     application = ApplicationBuilder().token(BOT_TOKEN).build()
+
     application.bot_data["db"] = db
+
     if graph:
         application.bot_data["graph"] = graph
 
-    # Attach the loop so external callers (webhook) can reuse it
-    setattr(application, "bot_loop", loop)
-
-    # Register handlers: auth conversation, then core handlers
+    # -----------------------------------------
+    # Register handlers
+    # -----------------------------------------
     if build_auth_handler:
         try:
             application.add_handler(build_auth_handler())
             print("Auth ConversationHandler registered.")
         except Exception as e:
-            print("Failed to register auth convo handler:", e)
+            print("Failed to register auth handler:", e)
 
-    # Register existing handlers (these functions are defined in this file)
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(MessageHandler(filters.CONTACT, contact_handler))
-    application.add_handler(MessageHandler(filters.ALL & ~filters.CONTACT, message_handler))
+    application.add_handler(
+        CommandHandler("start", start_command)
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.CONTACT,
+            contact_handler
+        )
+    )
+
+    application.add_handler(
+        MessageHandler(
+            filters.ALL & ~filters.CONTACT,
+            message_handler
+        )
+    )
 
     return application
 
 
-def main() -> None:
-    # Backwards-compatible entrypoint that runs polling (for local development)
-    application = build_application()
-    print("Bot is starting (polling). Ask a user to /start and share contact.")
+async def create_webhook_application():
+    """
+    Create and initialize Telegram application for webhook use.
+    """
+
+    application = await build_application_async()
+
+    await application.initialize()
+
+    print("✅ Telegram Application initialized for webhook.")
+
+    return application
+
+def main():
+    """
+    Local development only.
+    Runs Telegram bot using polling.
+    """
+
+    application = asyncio.run(
+        build_application_async()
+    )
+
     application.run_polling(
         poll_interval=1.0,
         allowed_updates=Update.ALL_TYPES,
@@ -636,21 +678,32 @@ def main() -> None:
         stop_signals=None,
     )
 
-
 # Convenience: build a module-level application for webhook use by imports
-try:
-    application = build_application()
-except Exception as e:
-    print("Failed to build application at import time:", e)
-else:
-    try:
-        # Reuse the loop attached to the application (created in build_application)
-        loop = getattr(application, "bot_loop", None) or ensure_event_loop()
-        loop.run_until_complete(application.initialize())
-        setattr(application, "bot_loop", loop)
-        print("Telegram Application initialized at import time.")
-    except Exception as e:
-        print("Failed to initialize application at import time:", e)
+# def create_webhook_application():
+#     """
+#     Create and initialize the Telegram application for webhook use.
+#     """
+#     application = build_application()
+
+#     loop = getattr(application, "bot_loop", None)
+
+#     if loop is None:
+#         raise RuntimeError(
+#             "Telegram application event loop was not created"
+#         )
+
+#     if loop.is_closed():
+#         raise RuntimeError(
+#             "Telegram application event loop is closed"
+#         )
+
+#     loop.run_until_complete(
+#         application.initialize()
+#     )
+
+#     print("Telegram Application initialized for webhook.")
+
+#     return application
 
 
 if __name__ == "__main__":
