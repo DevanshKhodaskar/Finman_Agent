@@ -21,7 +21,7 @@ cd BudgetManage```
 2. Install dependencies:```bash
 pip install -r requirements.txt```
 3. Create a `.env` file in the root directory:
-```envTELEGRAM_BOT_TOKEN=your_telegram_bot_token
+```envTELEGRAM_TESTING_BOT_TOKEN=your_TELEGRAM_TESTING_BOT_TOKEN
 GROQ_API_KEY=your_groq_api_keyMONGO_URI=your_mongodb_connection_string
 MONGO_DB_NAME=your_database_name
 SECRET_KEY=your_secret_key_for_password_hashing```

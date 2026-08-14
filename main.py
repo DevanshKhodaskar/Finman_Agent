@@ -1,96 +1,70 @@
+import asyncio
 import os
 
-from fastapi import FastAPI, Request, HTTPException
-from telegram import Update
-
-from bot_runner import create_webhook_application
+from bot_runner import build_application_async
 
 
-app = FastAPI()
+async def run_local_bot():
+    """
+    Run FinMan locally using Telegram long polling.
 
-tg_application = None
+    No webhook, ngrok, or public URL is required.
+    """
 
+    print("🚀 Starting FinMan in LOCAL TESTING mode...")
 
-@app.on_event("startup")
-async def startup():
-    global tg_application
+    # Build the Telegram application
+    application = await build_application_async()
 
-    print("🚀 Starting FinMan Telegram webhook...")
+    # Initialize Telegram application
+    await application.initialize()
 
-    tg_application = await create_webhook_application()
+    print("✅ Telegram application initialized.")
 
-    print("✅ FinMan Telegram webhook ready.")
-
-
-@app.get("/")
-async def health():
-    return {
-        "status": "ok",
-        "message": "FinMan Telegram Bot is running ✅"
-    }
-
-
-@app.post("/webhook")
-async def telegram_webhook(request: Request):
-
-    if tg_application is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Telegram application not initialized"
-        )
-
-    # Optional Telegram secret-token
-    webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET")
-
-    if webhook_secret:
-        received_secret = request.headers.get(
-            "X-Telegram-Bot-Api-Secret-Token"
-        )
-
-        if received_secret != webhook_secret:
-            print("❌ Invalid Telegram webhook secret")
-
-            raise HTTPException(
-                status_code=403,
-                detail="Unauthorized"
-            )
-
-    # Get Telegram update
+    # Remove any existing Telegram webhook.
+    # This is important because polling and webhook mode cannot
+    # both be used at the same time.
     try:
-        data = await request.json()
-    except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid JSON"
+        await application.bot.delete_webhook(
+            drop_pending_updates=False
         )
-
-    # Convert JSON to Telegram Update
-    try:
-        update = Update.de_json(
-            data,
-            tg_application.bot
-        )
+        print("✅ Existing webhook removed.")
     except Exception as e:
-        print("❌ Failed to parse update:", repr(e))
+        print("⚠️ Could not remove webhook:", e)
 
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid Telegram update"
-        )
+    # Start Telegram application
+    await application.start()
 
-    # Process update
+    # Start long polling
+    await application.updater.start_polling(
+        allowed_updates=None,
+        drop_pending_updates=False
+    )
+
+    print("✅ FinMan bot is running locally.")
+    print("📱 Open Telegram and send /start to your bot.")
+    print("Press CTRL+C to stop.")
+
     try:
-        await tg_application.process_update(update)
+        # Keep the process alive
+        await asyncio.Event().wait()
 
-    except Exception as e:
-        print(
-            "❌ Error processing Telegram update:",
-            repr(e)
-        )
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
 
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to process update"
-        )
+    finally:
+        print("\n🛑 Stopping FinMan bot...")
 
-    return {"ok": True}
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
+
+        print("✅ Bot stopped.")
+
+
+def main():
+    asyncio.run(run_local_bot())
+
+
+if __name__ == "__main__":
+    main()

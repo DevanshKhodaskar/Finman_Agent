@@ -17,10 +17,10 @@ from langchain_core.messages import HumanMessage
 from langchain_bot import create_graph
 
 load_dotenv()
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+BOT_TOKEN = os.getenv("TELEGRAM_TESTING_BOT_TOKEN")
 if not BOT_TOKEN:
     # This module may also be imported from bot.auth_handlers, but ensure env present when run standalone.
-    print("WARNING: TELEGRAM_BOT_TOKEN not found in .env (message_to_json.py)")
+    print("WARNING: TELEGRAM_TESTING_BOT_TOKEN not found in .env (message_to_json.py)")
     # don't raise here to allow unit tests / import in non-bot contexts
 
 

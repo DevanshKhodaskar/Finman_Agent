@@ -59,12 +59,12 @@ except Exception:
 
 # Load env
 load_dotenv()
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+BOT_TOKEN = os.getenv("TELEGRAM_TESTING_BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "Finman")
 
 if not BOT_TOKEN:
-    print("ERROR: BOT_TOKEN not found in .env. Create a .env with TELEGRAM_BOT_TOKEN=your_token")
+    print("ERROR: BOT_TOKEN not found in .env. Create a .env with TELEGRAM_TESTING_BOT_TOKEN=your_token")
     sys.exit(1)
 
 if not MONGO_URI:
